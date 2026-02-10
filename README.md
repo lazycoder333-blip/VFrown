@@ -1,5 +1,5 @@
 # V.Frown
- An experimental emulator for the V.Smile
+ A poorly modified version of the experimental emulator for the V.Smile
 
  ![VFrown Logo](images/icon.png)
 
@@ -45,7 +45,4 @@ Currently...
 
 Later on...
 - Add support for more controllers
-- Add Remappable buttons
-- Add a TAS interface
-- Memory viewer, editor, and cheat manager
 - ...and more...
