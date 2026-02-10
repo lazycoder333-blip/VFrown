@@ -43,5 +43,7 @@ void VSmile_Step();
 void VSmile_Log(const char* message, ...);
 void VSmile_Warning(const char* message, ...);
 void VSmile_Error(const char* message, ...);
+bool VSmile_GetWarningsEnabled();
+void VSmile_SetWarningsEnabled(bool enabled);
 
 #endif // VSMILE_H

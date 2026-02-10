@@ -64,6 +64,9 @@ void Bus_Update(int32_t cycles);
 uint16_t Bus_Load(uint32_t addr);
 void Bus_Store(uint32_t addr, uint16_t data);
 
+const uint8_t* Bus_GetRamBytes();
+uint32_t Bus_GetRamByteSize();
+
 uint16_t Bus_GetChipSelectMode();
 void Bus_SetChipSelectMode(uint16_t data);
 uint16_t Bus_GetRamDecode();

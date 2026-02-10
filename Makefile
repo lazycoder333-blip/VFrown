@@ -17,7 +17,7 @@ endif
 
 ifeq ($(platform), windows)
 	CC=x86_64-w64-mingw32-gcc
-	LIBS+=-lkernel32 -luser32 -lshell32 -lgdi32 -ld3d11 -ldxgi -lole32 -loleaut32 -lomdlg32
+	LIBS+=-lkernel32 -luser32 -lshell32 -lgdi32 -ld3d11 -ldxgi -lole32 -loleaut32 -lcomdlg32 -ldinput8
 	OUTEXT=.exe
 else ifeq ($(platform), linux)
 	DEFS+=-D_GNU_SOURCE

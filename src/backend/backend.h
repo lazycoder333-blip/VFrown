@@ -10,13 +10,26 @@
 #include "ui.h"
 #include "userSettings.h"
 
-#define MAX_SAMPLES 65536
+#define MAX_AUDIO_FRAMES 32768
+#define MAX_AUDIO_SAMPLES (MAX_AUDIO_FRAMES * 2)
 
 enum {
   SCREENFILTER_NEAREST,
   SCREENFILTER_LINEAR,
   NUM_SCREENFILTERS,
 };
+
+typedef enum {
+  HOTKEY_TOGGLE_UI,
+  HOTKEY_TOGGLE_FULLSCREEN,
+  HOTKEY_RESET,
+  HOTKEY_PAUSE,
+  HOTKEY_STEP,
+  HOTKEY_SAVE_STATE,
+  HOTKEY_LOAD_STATE,
+  HOTKEY_FAST_FORWARD,
+  HOTKEY_MAX
+} HotkeyAction_t;
 
 typedef struct {
   sgl_context  context;
@@ -25,11 +38,21 @@ typedef struct {
   sg_sampler   samplers[NUM_SCREENFILTERS];
 
   FILE* saveFile;
+  uint8_t* saveBuffer;
+  uint32_t saveBufferSize;
+  uint32_t saveBufferCap;
+  uint32_t saveBufferPos;
+  const uint8_t* loadBuffer;
+  uint32_t loadBufferSize;
+  uint32_t loadBufferPos;
+  bool saveBufferActive;
+  bool loadBufferActive;
 
-  float sampleBuffer[MAX_SAMPLES];
+  float sampleBuffer[MAX_AUDIO_SAMPLES];
   float filterL, filterR;
+  float sampleReadPos;
   int32_t sampleHead, sampleTail;
-  bool samplesEmpty;
+  int32_t sampleCount;
 
   float emulationSpeed;
   int32_t currSampleX[16];
@@ -44,6 +67,11 @@ typedef struct {
   bool controlsEnabled;
   bool keepAspectRatio;
   uint8_t currScreenFilter;
+  int32_t quickSaveSlot;
+  int32_t quickLoadSlot;
+  int32_t hotkeys[HOTKEY_MAX];
+  bool fastForwardEnabled;
+  float fastForwardPrevSpeed;
 } Backend_t;
 
 bool Backend_Init();
@@ -54,12 +82,49 @@ void Backend_AudioCallback(float* buffer, int numFrames, int numChannels);
 
 // Save states
 void Backend_GetFileName(const char* path);
+const char* Backend_GetRomTitle();
 const char* Backend_OpenFileDialog(const char* title);
+const char* Backend_SaveFileDialog(const char* title, const char* defaultPath);
 void Backend_OpenMessageBox(const char* title, const char* message);
 void Backend_WriteSave(void* data, uint32_t size);
 void Backend_ReadSave(void* data, uint32_t size);
 void Backend_SaveState();
 void Backend_LoadState();
+bool Backend_SaveStateToBuffer(uint8_t** outData, uint32_t* outSize);
+bool Backend_LoadStateFromBuffer(const uint8_t* data, uint32_t size);
+void Backend_SaveStateSlot(int32_t slot);
+void Backend_LoadStateSlot(int32_t slot);
+bool Backend_DeleteStateSlot(int32_t slot);
+bool Backend_StateSlotExists(int32_t slot);
+bool Backend_GetStatePath(int32_t slot, char* outPath, size_t outSize);
+int32_t Backend_GetQuickSaveSlot();
+int32_t Backend_GetQuickLoadSlot();
+void Backend_SetQuickSaveSlot(int32_t slot);
+void Backend_SetQuickLoadSlot(int32_t slot);
+int32_t Backend_GetHotkey(HotkeyAction_t action);
+void Backend_SetHotkey(HotkeyAction_t action, int32_t keycode);
+bool Backend_GetFastForward();
+void Backend_SetFastForward(bool enabled);
+
+// TAS recording
+bool Backend_TAS_IsRecording();
+uint32_t Backend_TAS_GetFrameCount();
+void Backend_TAS_Start();
+void Backend_TAS_Stop();
+void Backend_TAS_Clear();
+bool Backend_TAS_Save(const char* path);
+void Backend_TAS_RecordFrame(uint32_t buttons0, uint32_t buttons1);
+bool Backend_TAS_Load(const char* path);
+bool Backend_TAS_IsPlaying();
+uint32_t Backend_TAS_GetPlaybackFrame();
+uint32_t Backend_TAS_GetPlaybackLength();
+void Backend_TAS_StartPlayback();
+void Backend_TAS_StopPlayback();
+bool Backend_TAS_NextFrame(uint32_t* outButtons0, uint32_t* outButtons1);
+bool Backend_TAS_GetStartFromBoot();
+void Backend_TAS_SetStartFromBoot(bool enabled);
+bool Backend_TAS_GetFrame(uint32_t index, uint32_t* outButtons0, uint32_t* outButtons1);
+bool Backend_TAS_SetFrame(uint32_t index, uint32_t buttons0, uint32_t buttons1, bool grow);
 
 float Backend_GetSpeed();
 void Backend_SetSpeed(float newSpeed);

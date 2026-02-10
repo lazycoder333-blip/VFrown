@@ -27,5 +27,7 @@ void UI_StartFrame();
 void UI_RunFrame();
 void UI_Render();
 void UI_Toggle();
+bool UI_IsCheatOverlayOpen();
+bool UI_IsInputCaptureActive();
 
 #endif // UI_H

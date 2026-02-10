@@ -42,8 +42,8 @@
 #include <windows.h>
 #include <regstr.h>
 #include <dinput.h>
-#include <XInput.h>
-#include <Dbt.h>
+#include <xinput.h>
+#include <dbt.h>
 
 // The following code is from SDL2
 // detects gamepad device remove/attach events without having to poll multiple times per second

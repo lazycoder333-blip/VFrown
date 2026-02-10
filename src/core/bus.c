@@ -220,6 +220,16 @@ void Bus_Store(uint32_t addr, uint16_t data) {
 }
 
 
+const uint8_t* Bus_GetRamBytes() {
+  return (const uint8_t*)this.ram;
+}
+
+
+uint32_t Bus_GetRamByteSize() {
+  return RAM_SIZE * sizeof(uint16_t);
+}
+
+
 uint16_t Bus_GetChipSelectMode() {
   return this.chipSelectMode;
 }

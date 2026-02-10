@@ -255,8 +255,8 @@ void Controller_TxComplete(uint8_t ctrlNum) {
     uint8_t colors = 0x90;
     if (this->stale & (1 << INPUT_RED)) colors |= 0x08;
     if (this->stale & (1 << INPUT_YELLOW)) colors |= 0x04;
-    if (this->stale & (1 << INPUT_GREEN)) colors |= 0x02;
-    if (this->stale & (1 << INPUT_BLUE)) colors |= 0x01;
+    if (this->stale & (1 << INPUT_GREEN)) colors |= 0x01;
+    if (this->stale & (1 << INPUT_BLUE)) colors |= 0x02;
     Controller_QueueTx(ctrlNum, colors);
   }
 
@@ -399,8 +399,8 @@ void Controller_UpdateButtons(uint8_t ctrlNum, uint32_t buttons) {
     uint8_t colors = 0x90;
     if (buttons & (1 << INPUT_RED)) colors |= 0x08;
     if (buttons & (1 << INPUT_YELLOW)) colors |= 0x04;
-    if (buttons & (1 << INPUT_GREEN)) colors |= 0x02;
-    if (buttons & (1 << INPUT_BLUE)) colors |= 0x01;
+    if (buttons & (1 << INPUT_GREEN)) colors |= 0x01;
+    if (buttons & (1 << INPUT_BLUE)) colors |= 0x02;
     Controller_QueueTx(ctrlNum, colors);
   }
 

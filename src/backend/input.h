@@ -40,6 +40,7 @@ typedef struct {
   int8_t  buttons[2][NUM_INPUTS];
   uint32_t curr[2], prev[2];
   int8_t checkPadTimer;
+  bool keyDown[512];
   bool inputEnabled;
 } Input_t;
 
@@ -49,7 +50,17 @@ void Input_Cleanup();
 
 void Input_Update();
 uint32_t Input_GetChangedButtons(uint8_t ctrlNum);
+uint32_t Input_GetButtons(uint8_t ctrlNum);
+uint32_t Input_GetLatchedButtons(uint8_t ctrlNum);
+bool Input_GetMapping(uint8_t ctrlNum, uint8_t input, Mapping_t* outMapping);
+bool Input_SetMapping(uint8_t ctrlNum, uint8_t input, Mapping_t mapping);
+bool Input_IsKeyDown(uint16_t keycode);
+bool Input_GetLastEvent(Mapping_t* outEvent);
+void Input_ClearLastEvent();
 void Input_SetControlsEnable(bool isEnabled);
+void Input_SetOverrideEnabled(bool enabled);
+bool Input_GetOverrideEnabled();
+void Input_ApplyOverride(uint32_t buttons0, uint32_t buttons1);
 
 void Input_KeyboardMouseEvent(sapp_event* event);
 

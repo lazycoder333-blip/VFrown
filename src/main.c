@@ -10,6 +10,14 @@ static char sysromPath[1024];
 static void initFunc() {
   speed = 0.0f;
 
+  // Ensure runtime directories exist (create if missing)
+  EnsureDirectoryExists("sysrom");
+  EnsureDirectoryExists("sysRom");
+  EnsureDirectoryExists("savestates");
+  EnsureDirectoryExists("roms");
+  EnsureDirectoryExists("cheats");
+  EnsureDirectoryExists("tas");
+
   if (!Backend_Init()) {
     VSmile_Error("Failed to initialize backend");
   }
@@ -57,6 +65,20 @@ static void frameFunc() {
   if (speed >= 1.0f) {
     systemSpeed = 1.0f / systemSpeed;
     while (speed > 0.0f) {
+      if (Backend_TAS_IsPlaying()) {
+        uint32_t buttons0 = 0;
+        uint32_t buttons1 = 0;
+        if (Backend_TAS_NextFrame(&buttons0, &buttons1)) {
+          Input_SetOverrideEnabled(true);
+          Input_ApplyOverride(buttons0, buttons1);
+        } else {
+          Input_SetOverrideEnabled(false);
+        }
+      } else {
+        Input_SetOverrideEnabled(false);
+      }
+
+      Backend_TAS_RecordFrame(Input_GetLatchedButtons(0), Input_GetLatchedButtons(1));
       VSmile_RunFrame();
       speed -= systemSpeed;
     }
@@ -116,8 +138,8 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     .frame_cb = frameFunc,
     .cleanup_cb = cleanupFunc,
     .event_cb = (void(*)(const sapp_event*))eventFunc,
-    .width = 640,
-    .height = 480,
+    .width = 960,
+    .height = 720,
     .window_title = "V.Frown",
     .enable_dragndrop = true,
     .max_dropped_files = 2,

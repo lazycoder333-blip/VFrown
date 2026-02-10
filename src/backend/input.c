@@ -12,6 +12,8 @@
   }
 
 static Input_t this;
+static bool overrideEnabled = false;
+static uint32_t latchedPress[2];
 
 static const char* mappingStrings[2][NUM_INPUTS] = {
   {
@@ -50,6 +52,8 @@ static uint8_t _Input_GetValueFromHexDigit(char c);
 
 bool Input_Init() {
   memset(&this, 0, sizeof(Input_t));
+  latchedPress[0] = 0;
+  latchedPress[1] = 0;
 
   Gamepad_init();
   Gamepad_buttonDownFunc(_Input_GamepadButtonDown, NULL);
@@ -106,11 +110,101 @@ void Input_Update() {
     Gamepad_detectDevices();
   }
 
+  if (!overrideEnabled) {
+    if (this.inputEnabled) {
+      if (Input_GetChangedButtons(0)) {
+        Controller_UpdateButtons(0, this.curr[0]);
+      }
+      if (Input_GetChangedButtons(1)) {
+        Controller_UpdateButtons(1, this.curr[1]);
+      }
+    }
+
+    this.prev[0] = this.curr[0];
+    this.prev[1] = this.curr[1];
+  }
+}
+
+
+uint32_t Input_GetChangedButtons(uint8_t ctrlNum) {
+  return this.curr[ctrlNum] ^ this.prev[ctrlNum];
+}
+
+
+uint32_t Input_GetButtons(uint8_t ctrlNum) {
+  return this.curr[ctrlNum];
+}
+
+
+uint32_t Input_GetLatchedButtons(uint8_t ctrlNum) {
+  uint32_t value = this.curr[ctrlNum] | latchedPress[ctrlNum];
+  latchedPress[ctrlNum] = 0;
+  return value;
+}
+
+
+bool Input_GetMapping(uint8_t ctrlNum, uint8_t input, Mapping_t* outMapping) {
+  if (!outMapping) return false;
+  if (ctrlNum >= 2 || input >= NUM_INPUTS) return false;
+  *outMapping = this.controllerMappings[ctrlNum][input];
+  return true;
+}
+
+
+bool Input_SetMapping(uint8_t ctrlNum, uint8_t input, Mapping_t mapping) {
+  if (ctrlNum >= 2 || input >= NUM_INPUTS) return false;
+  this.controllerMappings[ctrlNum][input] = mapping;
+  return true;
+}
+
+
+bool Input_IsKeyDown(uint16_t keycode) {
+  if (keycode >= 512) return false;
+  return this.keyDown[keycode];
+}
+
+
+bool Input_GetLastEvent(Mapping_t* outEvent) {
+  if (!outEvent) return false;
+  *outEvent = this.lastEvent;
+  return true;
+}
+
+
+void Input_ClearLastEvent() {
+  this.lastEvent.raw = 0;
+}
+
+
+void Input_SetControlsEnable(bool isEnabled) {
+  this.inputEnabled = isEnabled;
+}
+
+
+void Input_SetOverrideEnabled(bool enabled) {
+  overrideEnabled = enabled;
+}
+
+
+bool Input_GetOverrideEnabled() {
+  return overrideEnabled;
+}
+
+
+void Input_ApplyOverride(uint32_t buttons0, uint32_t buttons1) {
+  if (!overrideEnabled) return;
+
+  uint32_t prev0 = this.curr[0];
+  uint32_t prev1 = this.curr[1];
+
+  this.curr[0] = buttons0;
+  this.curr[1] = buttons1;
+
   if (this.inputEnabled) {
-    if (Input_GetChangedButtons(0)) {
+    if ((this.curr[0] ^ prev0) != 0) {
       Controller_UpdateButtons(0, this.curr[0]);
     }
-    if (Input_GetChangedButtons(1)) {
+    if ((this.curr[1] ^ prev1) != 0) {
       Controller_UpdateButtons(1, this.curr[1]);
     }
   }
@@ -120,25 +214,21 @@ void Input_Update() {
 }
 
 
-uint32_t Input_GetChangedButtons(uint8_t ctrlNum) {
-  return this.curr[ctrlNum] ^ this.prev[ctrlNum];
-}
-
-
-void Input_SetControlsEnable(bool isEnabled) {
-  this.inputEnabled = isEnabled;
-}
-
-
 void Input_KeyboardMouseEvent(sapp_event* event) {
   switch (event->type) {
 
   case SAPP_EVENTTYPE_KEY_DOWN:
     _Input_CheckInput(INPUT_DEVICETYPE_KEYBOARD, 0, INPUT_INPUTTYPE_BUTTON, event->key_code, 0x7fff);
+    if (event->key_code < 512) {
+      this.keyDown[event->key_code] = true;
+    }
     break;
 
   case SAPP_EVENTTYPE_KEY_UP:
     _Input_CheckInput(INPUT_DEVICETYPE_KEYBOARD, 0, INPUT_INPUTTYPE_BUTTON, event->key_code, 0x0000);
+    if (event->key_code < 512) {
+      this.keyDown[event->key_code] = false;
+    }
     break;
 
   case SAPP_EVENTTYPE_MOUSE_MOVE:
@@ -193,8 +283,13 @@ static void _Input_CheckInput(
       // printf("%08x, %08x\n", mapping.raw, event.raw);
       if ((mapping.raw & 0xffff) == (event.raw & 0xffff)) {
         int16_t threshold = mapping.value;
-        if (((threshold < 0) && (value <= threshold)) || ((threshold > 0) && value >= threshold)) {
+        bool wasPressed = (this.curr[p] & (1 << i)) != 0;
+        bool shouldPress = ((threshold < 0) && (value <= threshold)) || ((threshold > 0) && value >= threshold);
+        if (shouldPress) {
           this.curr[p] |=  (1 << i);
+          if (!wasPressed) {
+            latchedPress[p] |= (1 << i);
+          }
         } else {
           this.curr[p] &= ~(1 << i);
         }
@@ -280,7 +375,7 @@ void Input_SaveMappings() {
 }
 
 static bool _Input_GetMappingString(Mapping_t mapping, char string[11]) {
-  memset(string, 0, sizeof(*string));
+  memset(string, 0, 11);
 
   // Mapping String is broken up as follows:
   // 'ABCDDDEEEE'
@@ -389,7 +484,7 @@ static bool _Input_GetMappingFromString(Mapping_t* outMapping, char string[11]) 
       VSmile_Warning("Unable to load mapping from string: invalid character '%c' in inputID", string[3+i]);
       return false;
     }
-    inputID = (inputID << 4) | digitValue;
+    inputID |= (uint16_t)(digitValue << (i * 4));
   }
   if (inputID > 0x3ff) {
     VSmile_Warning("Unable to load mapping from string: inputID %d out of valid range", inputID);
@@ -398,13 +493,13 @@ static bool _Input_GetMappingFromString(Mapping_t* outMapping, char string[11]) 
   mapping.inputID = inputID;
 
   int16_t value = 0;
-  for (uint32_t i = 0; i < 3; i++) {
-    uint8_t digitValue = _Input_GetValueFromHexDigit(string[3+i]);
+  for (uint32_t i = 0; i < 4; i++) {
+    uint8_t digitValue = _Input_GetValueFromHexDigit(string[6+i]);
     if (digitValue > 0xf) {
-      VSmile_Warning("Unable to load mapping from string: invalid character '%c' in value", string[3+i]);
+      VSmile_Warning("Unable to load mapping from string: invalid character '%c' in value", string[6+i]);
       return false;
     }
-    value = (value << 4) | digitValue;
+    value |= (int16_t)(digitValue << (i * 4));
   }
   mapping.value = value;
 

@@ -83,4 +83,8 @@ enum {
 
 bool strequ(const char* a, const char* b);
 
+// Ensure a directory exists, creating parent components as needed.
+// Returns true on success or if the directory already exists.
+bool EnsureDirectoryExists(const char* path);
+
 #endif // COMMON_H

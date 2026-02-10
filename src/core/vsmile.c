@@ -1,6 +1,9 @@
 #include "vsmile.h"
+#include "cheats.h"
+#include "../backend/backend.h"
 
 static VSmile_t this;
+static bool warningsEnabled = true;
 
 bool VSmile_Init() {
   memset(&this, 0, sizeof(VSmile_t));
@@ -11,6 +14,8 @@ bool VSmile_Init() {
   if (!SPU_Init()) return false;
   if (!Controller_Init()) return false;
 
+  Cheats_Reset();
+
   this.clockScale = 1.0f;
   this.introEnabled = true;
 
@@ -19,6 +24,7 @@ bool VSmile_Init() {
 
 
 void VSmile_Cleanup() {
+  Cheats_Save();
   Controller_Cleanup();
   PPU_Cleanup();
   SPU_Cleanup();
@@ -53,6 +59,8 @@ void VSmile_RunFrame() {
     if (PPU_RenderLine())
       break;
   }
+
+  Cheats_Apply();
   this.step = false;
 }
 
@@ -79,6 +87,7 @@ void VSmile_LoadState() {
 void VSmile_LoadROM(const char* path) {
   Bus_LoadROM(path);
   Backend_GetFileName(path);
+  Cheats_LoadForRom(Backend_GetRomTitle());
   this.romLoaded = true;
 }
 
@@ -148,6 +157,8 @@ void VSmile_Log(const char* message, ...) {
 
 
 void VSmile_Warning(const char* message, ...) {
+  if (!warningsEnabled)
+    return;
   if(message == NULL) {
     printf("\x1b[33m[WARNING]\x1b[0m unknown warning with NULL pointer thrown\n");
     return;
@@ -160,6 +171,16 @@ void VSmile_Warning(const char* message, ...) {
   va_end(args);
 
   printf("\x1b[33m[WARNING]\x1b[0m %s\n", buffer);
+}
+
+
+bool VSmile_GetWarningsEnabled() {
+  return warningsEnabled;
+}
+
+
+void VSmile_SetWarningsEnabled(bool enabled) {
+  warningsEnabled = enabled;
 }
 
 

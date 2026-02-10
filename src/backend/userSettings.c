@@ -41,6 +41,8 @@ static const DefaultEntry_t defaults[] = {
   {"c1help",       ""           },
   {"c1exit",       ""           },
   {"c1abc",        ""           },
+  { "warningsEnabled", "1"      },
+  { "cheatsEnabled",   "1"      },
 
 };
 // 109, 108, 107,106, 05a,058,043,056,041,053,044,020
@@ -127,6 +129,10 @@ static ini_t* _UserSettings_GetDefaults() {
 
 void UserSettings_WriteString(const char* name, char* value, uint32_t size) {
   int propertyIndex = ini_find_property(this.ini, INI_GLOBAL_SECTION, name, strlen(name));
+  if (propertyIndex == INI_NOT_FOUND) {
+    ini_property_add(this.ini, INI_GLOBAL_SECTION, name, strlen(name), value, size);
+    propertyIndex = ini_find_property(this.ini, INI_GLOBAL_SECTION, name, strlen(name));
+  }
   ini_property_value_set(this.ini, INI_GLOBAL_SECTION, propertyIndex, value, size);
 }
 
@@ -139,4 +145,41 @@ bool UserSettings_ReadString(const char* name, char* value, uint32_t bufferSize)
   }
   memcpy(value, valueText, bufferSize);
   return true;
+}
+
+static bool _UserSettings_ParseBool(const char* value, bool* outValue) {
+  if (!value || !outValue) return false;
+  if (strequ(value, "1") || strequ(value, "true") || strequ(value, "yes")) { *outValue = true; return true; }
+  if (strequ(value, "0") || strequ(value, "false") || strequ(value, "no")) { *outValue = false; return true; }
+  return false;
+}
+
+bool UserSettings_ReadInt(const char* name, int* outValue) {
+  if (!outValue) return false;
+  int propertyIndex = ini_find_property(this.ini, INI_GLOBAL_SECTION, name, strlen(name));
+  const char* valueText = ini_property_value(this.ini, INI_GLOBAL_SECTION, propertyIndex);
+  if (!valueText) return false;
+  char* end = NULL;
+  long parsed = strtol(valueText, &end, 10);
+  if (!end || end == valueText) return false;
+  *outValue = (int)parsed;
+  return true;
+}
+
+void UserSettings_WriteInt(const char* name, int value) {
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%d", value);
+  UserSettings_WriteString(name, buffer, (uint32_t)strlen(buffer));
+}
+
+bool UserSettings_ReadBool(const char* name, bool* outValue) {
+  if (!outValue) return false;
+  int propertyIndex = ini_find_property(this.ini, INI_GLOBAL_SECTION, name, strlen(name));
+  const char* valueText = ini_property_value(this.ini, INI_GLOBAL_SECTION, propertyIndex);
+  if (!valueText) return false;
+  return _UserSettings_ParseBool(valueText, outValue);
+}
+
+void UserSettings_WriteBool(const char* name, bool value) {
+  UserSettings_WriteString(name, value ? "1" : "0", 1);
 }

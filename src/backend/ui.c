@@ -1,5 +1,11 @@
 #include "ui.h"
 #include "backend.h"
+#include "input.h"
+#include "../core/cheats.h"
+#include "../core/memory_scan.h"
+#include "../core/bus.h"
+
+#include <sys/stat.h>
 
 // static UI_t this;
 
@@ -55,6 +61,52 @@ static nk_bool showRegisters   = false;
 static nk_bool showMemory      = false;
 static nk_bool showMemWatch    = false;
 static nk_bool showCPU         = false;
+static nk_bool showCheats      = false;
+static nk_bool showMemoryScan  = false;
+static nk_bool showSaveStates  = false;
+static nk_bool showHotkeys     = false;
+static nk_bool showControllerConfig = false;
+static nk_bool showTASEditor   = false;
+
+static int scanType = 0;
+static int scanCompare = 0;
+static nk_bool scanHex = false;
+static nk_bool scanSigned = false;
+static nk_bool scanMatchCase = false;
+static char scanValueText[64];
+static int scanValueTextLen;
+static int scanSelectedIndex = -1;
+static int manageSelectedIndex = -1;
+static nk_bool showAddCheat = false;
+static nk_bool showEditCheat = false;
+static int editCheatIndex = -1;
+static char addCheatName[CHEATS_MAX_NAME];
+static int addCheatNameLen;
+static char addCheatValue[8];
+static int addCheatValueLen;
+static char addCheatMask[8];
+static int addCheatMaskLen;
+static nk_bool addCheatEnabled = true;
+static nk_bool addCheatPersistent = true;
+static nk_bool addCheatWatch = false;
+static nk_bool addCheatWatchHex = false;
+static int addCheatMode = 0;
+static char addCheatStep[8];
+static int addCheatStepLen;
+static char addCheatMin[8];
+static int addCheatMinLen;
+static char addCheatMax[8];
+static int addCheatMaxLen;
+static nk_bool addCheatLimitEnabled = true;
+static int addCheatCondition = 0;
+static uint32_t addCheatAddr = 0;
+static nk_bool showScanContext = false;
+static int scanContextIndex = -1;
+static struct nk_vec2 scanContextPos;
+static nk_bool showCheatContext = false;
+static int cheatContextIndex = -1;
+static struct nk_vec2 cheatContextPos;
+static nk_bool showDeleteCheatConfirm = false;
 
 static nk_bool showIntro = true;
 static nk_bool showLeds  = false;
@@ -64,6 +116,12 @@ static nk_bool keepAR;
 static nk_bool showLayer[3] = { true, true, true };
 static nk_bool showSpriteOutlines = false;
 static nk_bool showSpriteFlip = false;
+
+static int hotkeyCaptureIndex = -1;
+static int mapCaptureCtrl = -1;
+static int mapCaptureInput = -1;
+static uint8_t controllerConfigIndex = 0;
+static int tasEditorStartFrame = 0;
 
 static char jumpAddressText[7];
 static int  jumpAddressTextLen;
@@ -90,6 +148,444 @@ static const char* regionText[] = {
 static const char* filterText[] = {
   "Nearest", "Linear"
 };
+
+static const char* scanTypeText[] = {
+  "Int 8-bit", "Int 16-bit", "Int 32-bit", "String UTF-8", "String UTF-16"
+};
+
+static const char* scanCompareText[] = {
+  "Equal", "Not Equal", "Greater", "Less", "Changed", "Unchanged", "Increased", "Decreased"
+};
+
+static const char* cheatConditionText[] = {
+  "None", "Hint (Exit)", "Enter", "Help", "ABC", "Up", "Down", "Left", "Right", "Red", "Yellow", "Green", "Blue"
+};
+
+static const char* hotkeyActionText[] = {
+  "Toggle UI",
+  "Toggle Fullscreen",
+  "Reset",
+  "Pause",
+  "Step",
+  "Save State",
+  "Load State",
+  "Fast Forward"
+};
+
+static const char* controllerLabelText[] = { "Player 1", "Player 2" };
+
+static const char* inputNameText[] = {
+  "Up", "Dn", "Lt", "Rt",
+  "R", "Y", "G", "B",
+  "Ent", "Exit", "Help", "ABC"
+};
+
+static const uint8_t tasInputOrder[] = {
+  INPUT_UP, INPUT_DOWN, INPUT_LEFT, INPUT_RIGHT,
+  INPUT_RED, INPUT_YELLOW, INPUT_GREEN, INPUT_BLUE,
+  INPUT_ENTER, INPUT_EXIT, INPUT_HELP, INPUT_ABC
+};
+
+static const char* cheatModeText[] = {
+  "Set",
+  "Increment",
+  "Decrement"
+};
+
+static void FormatKeyName(int32_t keycode, char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  if (keycode == 0) {
+    snprintf(outText, outSize, "None");
+    return;
+  }
+
+  if (keycode >= SAPP_KEYCODE_A && keycode <= SAPP_KEYCODE_Z) {
+    char letter = (char)('A' + (keycode - SAPP_KEYCODE_A));
+    snprintf(outText, outSize, "%c", letter);
+    return;
+  }
+
+  if (keycode >= SAPP_KEYCODE_0 && keycode <= SAPP_KEYCODE_9) {
+    char digit = (char)('0' + (keycode - SAPP_KEYCODE_0));
+    snprintf(outText, outSize, "%c", digit);
+    return;
+  }
+
+  switch (keycode) {
+  case SAPP_KEYCODE_SPACE: snprintf(outText, outSize, "Space"); break;
+  case SAPP_KEYCODE_ENTER: snprintf(outText, outSize, "Enter"); break;
+  case SAPP_KEYCODE_TAB: snprintf(outText, outSize, "Tab"); break;
+  case SAPP_KEYCODE_ESCAPE: snprintf(outText, outSize, "Esc"); break;
+  case SAPP_KEYCODE_UP: snprintf(outText, outSize, "Up"); break;
+  case SAPP_KEYCODE_DOWN: snprintf(outText, outSize, "Down"); break;
+  case SAPP_KEYCODE_LEFT: snprintf(outText, outSize, "Left"); break;
+  case SAPP_KEYCODE_RIGHT: snprintf(outText, outSize, "Right"); break;
+  case SAPP_KEYCODE_BACKSPACE: snprintf(outText, outSize, "Backspace"); break;
+  case SAPP_KEYCODE_F1: snprintf(outText, outSize, "F1"); break;
+  case SAPP_KEYCODE_F2: snprintf(outText, outSize, "F2"); break;
+  case SAPP_KEYCODE_F3: snprintf(outText, outSize, "F3"); break;
+  case SAPP_KEYCODE_F4: snprintf(outText, outSize, "F4"); break;
+  case SAPP_KEYCODE_F5: snprintf(outText, outSize, "F5"); break;
+  case SAPP_KEYCODE_F6: snprintf(outText, outSize, "F6"); break;
+  case SAPP_KEYCODE_F7: snprintf(outText, outSize, "F7"); break;
+  case SAPP_KEYCODE_F8: snprintf(outText, outSize, "F8"); break;
+  case SAPP_KEYCODE_F9: snprintf(outText, outSize, "F9"); break;
+  case SAPP_KEYCODE_F10: snprintf(outText, outSize, "F10"); break;
+  case SAPP_KEYCODE_F11: snprintf(outText, outSize, "F11"); break;
+  case SAPP_KEYCODE_F12: snprintf(outText, outSize, "F12"); break;
+  default:
+    snprintf(outText, outSize, "Key %d", keycode);
+    break;
+  }
+}
+
+static void FormatMappingText(Mapping_t mapping, char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  if (mapping.raw == 0) {
+    snprintf(outText, outSize, "Unbound");
+    return;
+  }
+
+  if (mapping.deviceType == INPUT_DEVICETYPE_KEYBOARD && mapping.inputType == INPUT_INPUTTYPE_BUTTON) {
+    char keyName[32];
+    FormatKeyName(mapping.inputID, keyName, sizeof(keyName));
+    snprintf(outText, outSize, "Key %s", keyName);
+    return;
+  }
+
+  if (mapping.deviceType == INPUT_DEVICETYPE_MOUSE) {
+    if (mapping.inputType == INPUT_INPUTTYPE_BUTTON) {
+      snprintf(outText, outSize, "Mouse Btn %d", mapping.inputID);
+    } else if (mapping.inputType == INPUT_INPUTTYPE_MOTION) {
+      snprintf(outText, outSize, "Mouse Axis %d", mapping.inputID);
+    } else {
+      snprintf(outText, outSize, "Mouse Input %d", mapping.inputID);
+    }
+    return;
+  }
+
+  if (mapping.deviceType == INPUT_DEVICETYPE_CONTROLLER) {
+    if (mapping.inputType == INPUT_INPUTTYPE_BUTTON) {
+      snprintf(outText, outSize, "Pad%d Btn %d", mapping.deviceID + 1, mapping.inputID);
+    } else if (mapping.inputType == INPUT_INPUTTYPE_AXIS) {
+      snprintf(outText, outSize, "Pad%d Axis %d", mapping.deviceID + 1, mapping.inputID);
+    } else {
+      snprintf(outText, outSize, "Pad%d Input %d", mapping.deviceID + 1, mapping.inputID);
+    }
+    return;
+  }
+
+  snprintf(outText, outSize, "Unbound");
+}
+
+static void BuildHotkeyLabel(HotkeyAction_t action, const char* name, char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  int32_t keycode = Backend_GetHotkey(action);
+  if (keycode != 0) {
+    char keyName[32];
+    FormatKeyName(keycode, keyName, sizeof(keyName));
+    snprintf(outText, outSize, "[%s] %s", keyName, name);
+  } else {
+    snprintf(outText, outSize, "%s", name);
+  }
+}
+
+static void FormatScanResultValue(uint32_t offset, char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  const uint8_t* ram = Bus_GetRamBytes();
+  uint32_t ramSize = Bus_GetRamByteSize();
+  if (!ram || offset >= ramSize) {
+    snprintf(outText, outSize, "N/A");
+    return;
+  }
+
+  if (scanType == MEMORY_SCAN_INT8) {
+    uint8_t value = ram[offset];
+    if (scanHex) {
+      snprintf(outText, outSize, "0x%02x", value);
+    } else if (scanSigned) {
+      snprintf(outText, outSize, "%d", (int8_t)value);
+    } else {
+      snprintf(outText, outSize, "%u", (uint8_t)value);
+    }
+    return;
+  }
+
+  if (scanType == MEMORY_SCAN_INT16) {
+    if (offset + 1 >= ramSize) {
+      snprintf(outText, outSize, "N/A");
+      return;
+    }
+    uint16_t value = (uint16_t)ram[offset] | ((uint16_t)ram[offset + 1] << 8);
+    if (scanHex) {
+      snprintf(outText, outSize, "0x%04x", value);
+    } else if (scanSigned) {
+      snprintf(outText, outSize, "%d", (int16_t)value);
+    } else {
+      snprintf(outText, outSize, "%u", (uint16_t)value);
+    }
+    return;
+  }
+
+  if (scanType == MEMORY_SCAN_INT32) {
+    if (offset + 3 >= ramSize) {
+      snprintf(outText, outSize, "N/A");
+      return;
+    }
+    uint32_t value = (uint32_t)ram[offset]
+      | ((uint32_t)ram[offset + 1] << 8)
+      | ((uint32_t)ram[offset + 2] << 16)
+      | ((uint32_t)ram[offset + 3] << 24);
+    if (scanHex) {
+      snprintf(outText, outSize, "0x%08x", value);
+    } else if (scanSigned) {
+      snprintf(outText, outSize, "%d", (int32_t)value);
+    } else {
+      snprintf(outText, outSize, "%u", value);
+    }
+    return;
+  }
+
+  if (scanType == MEMORY_SCAN_STR_UTF8) {
+    size_t outPos = 0;
+    while (offset < ramSize && outPos + 1 < outSize) {
+      uint8_t c = ram[offset++];
+      if (c == 0) break;
+      if (c >= 32 && c <= 126) {
+        outText[outPos++] = (char)c;
+      } else {
+        outText[outPos++] = '.';
+      }
+      if (outPos >= 16) break;
+    }
+    outText[outPos] = '\0';
+    if (outPos == 0) snprintf(outText, outSize, "(empty)");
+    return;
+  }
+
+  if (scanType == MEMORY_SCAN_STR_UTF16) {
+    size_t outPos = 0;
+    while (offset + 1 < ramSize && outPos + 1 < outSize) {
+      uint8_t lo = ram[offset];
+      uint8_t hi = ram[offset + 1];
+      offset += 2;
+      if (lo == 0 && hi == 0) break;
+      if (hi == 0 && lo >= 32 && lo <= 126) {
+        outText[outPos++] = (char)lo;
+      } else {
+        outText[outPos++] = '.';
+      }
+      if (outPos >= 16) break;
+    }
+    outText[outPos] = '\0';
+    if (outPos == 0) snprintf(outText, outSize, "(empty)");
+    return;
+  }
+
+  snprintf(outText, outSize, "N/A");
+}
+
+static bool GetLocalTime(const time_t* timeValue, struct tm* outTime) {
+  if (!timeValue || !outTime) return false;
+#if defined(_WIN32)
+  return localtime_s(outTime, timeValue) == 0;
+#else
+  return localtime_r(timeValue, outTime) != NULL;
+#endif
+}
+
+static void FormatSavestateTimestamp(int32_t slot, char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  char path[256];
+  if (!Backend_GetStatePath(slot, path, sizeof(path)))
+    return;
+
+  struct stat st;
+  if (stat(path, &st) != 0)
+    return;
+
+  struct tm timeInfo;
+  if (!GetLocalTime(&st.st_mtime, &timeInfo))
+    return;
+
+  strftime(outText, outSize, "%Y-%m-%d %H:%M", &timeInfo);
+}
+
+static void BuildCheatInputStatus(char* outText, size_t outSize) {
+  if (!outText || outSize == 0) return;
+  outText[0] = '\0';
+
+  uint32_t buttons = Input_GetButtons(0) | Input_GetButtons(1);
+  if (buttons == 0) {
+    snprintf(outText, outSize, "Buttons: (none)");
+    return;
+  }
+
+  snprintf(outText, outSize, "Buttons:");
+  if (buttons & (1 << INPUT_HELP)) strncat(outText, " Exit", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_EXIT)) strncat(outText, " Help", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_ENTER)) strncat(outText, " Enter", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_ABC)) strncat(outText, " ABC", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_UP)) strncat(outText, " Up", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_DOWN)) strncat(outText, " Down", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_LEFT)) strncat(outText, " Left", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_RIGHT)) strncat(outText, " Right", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_RED)) strncat(outText, " Red", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_YELLOW)) strncat(outText, " Yellow", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_BLUE)) strncat(outText, " Blue", outSize - strlen(outText) - 1);
+  if (buttons & (1 << INPUT_GREEN)) strncat(outText, " Green", outSize - strlen(outText) - 1);
+}
+
+static void InitAddCheatFromOffset(uint32_t byteOffset) {
+  addCheatAddr = byteOffset / 2;
+  addCheatNameLen = 0;
+  memset(addCheatName, 0, sizeof(addCheatName));
+
+  uint16_t mask = 0xFFFF;
+  uint16_t value = Bus_Load(addCheatAddr);
+
+  const uint8_t* ram = Bus_GetRamBytes();
+  uint32_t ramSize = Bus_GetRamByteSize();
+  if (ram && byteOffset < ramSize) {
+    uint8_t byteValue = ram[byteOffset];
+    if (scanType == MEMORY_SCAN_INT8) {
+      if ((byteOffset & 1) == 0) {
+        mask = 0x00FF;
+        value = (uint16_t)byteValue;
+      } else {
+        mask = 0xFF00;
+        value = (uint16_t)(byteValue << 8);
+      }
+    } else if (scanType == MEMORY_SCAN_INT16 || scanType == MEMORY_SCAN_INT32) {
+      mask = 0xFFFF;
+    } else {
+      mask = 0xFFFF;
+    }
+  }
+
+  snprintf(addCheatValue, sizeof(addCheatValue), "%04x", value);
+  addCheatValueLen = (int)strlen(addCheatValue);
+  snprintf(addCheatMask, sizeof(addCheatMask), "%04x", mask);
+  addCheatMaskLen = (int)strlen(addCheatMask);
+
+  addCheatEnabled = true;
+  addCheatPersistent = true;
+  addCheatWatch = false;
+  addCheatWatchHex = false;
+  addCheatMode = 0;
+  snprintf(addCheatStep, sizeof(addCheatStep), "%04x", 1);
+  addCheatStepLen = (int)strlen(addCheatStep);
+  snprintf(addCheatMin, sizeof(addCheatMin), "%04x", 0);
+  addCheatMinLen = (int)strlen(addCheatMin);
+  snprintf(addCheatMax, sizeof(addCheatMax), "%04x", 0xFFFF);
+  addCheatMaxLen = (int)strlen(addCheatMax);
+  addCheatLimitEnabled = true;
+  addCheatCondition = 0;
+}
+
+static void InitEditCheat(int32_t index) {
+  const CheatEntry_t* entry = Cheats_GetCheat(index);
+  if (!entry) return;
+
+  editCheatIndex = index;
+  addCheatAddr = entry->addr;
+  addCheatEnabled = entry->enabled ? 1 : 0;
+  addCheatPersistent = entry->persistent ? 1 : 0;
+  addCheatWatch = entry->watchEnabled ? 1 : 0;
+  addCheatWatchHex = entry->watchHex ? 1 : 0;
+  addCheatMode = (int)entry->mode;
+
+  strncpy(addCheatName, entry->name, CHEATS_MAX_NAME - 1);
+  addCheatName[CHEATS_MAX_NAME - 1] = '\0';
+  addCheatNameLen = (int)strlen(addCheatName);
+
+  snprintf(addCheatValue, sizeof(addCheatValue), "%04x", entry->value);
+  addCheatValueLen = (int)strlen(addCheatValue);
+  snprintf(addCheatMask, sizeof(addCheatMask), "%04x", entry->mask);
+  addCheatMaskLen = (int)strlen(addCheatMask);
+  snprintf(addCheatStep, sizeof(addCheatStep), "%04x", entry->stepValue);
+  addCheatStepLen = (int)strlen(addCheatStep);
+  snprintf(addCheatMin, sizeof(addCheatMin), "%04x", entry->minValue);
+  addCheatMinLen = (int)strlen(addCheatMin);
+  snprintf(addCheatMax, sizeof(addCheatMax), "%04x", entry->maxValue);
+  addCheatMaxLen = (int)strlen(addCheatMax);
+  addCheatLimitEnabled = entry->limitEnabled ? 1 : 0;
+
+  if (entry->condition == CHEAT_CONDITION_HINT) {
+    addCheatCondition = 1;
+  } else if (entry->condition == CHEAT_CONDITION_BUTTON) {
+    switch (entry->conditionButton) {
+    case INPUT_ENTER: addCheatCondition = 2; break;
+    case INPUT_EXIT: addCheatCondition = 3; break;
+    case INPUT_ABC: addCheatCondition = 4; break;
+    case INPUT_UP: addCheatCondition = 5; break;
+    case INPUT_DOWN: addCheatCondition = 6; break;
+    case INPUT_LEFT: addCheatCondition = 7; break;
+    case INPUT_RIGHT: addCheatCondition = 8; break;
+    case INPUT_RED: addCheatCondition = 9; break;
+    case INPUT_YELLOW: addCheatCondition = 10; break;
+    case INPUT_BLUE: addCheatCondition = 11; break;
+    case INPUT_GREEN: addCheatCondition = 12; break;
+    default: addCheatCondition = 0; break;
+    }
+  } else {
+    addCheatCondition = 0;
+  }
+}
+
+static void BuildCheatFromFields(CheatEntry_t* entry) {
+  if (!entry) return;
+  memset(entry, 0, sizeof(*entry));
+
+  strncpy(entry->name, addCheatName, CHEATS_MAX_NAME - 1);
+  entry->name[CHEATS_MAX_NAME - 1] = '\0';
+  entry->addr = addCheatAddr;
+  entry->enabled = addCheatEnabled != 0;
+  entry->persistent = addCheatPersistent != 0;
+  entry->watchEnabled = addCheatWatch != 0;
+  entry->watchHex = addCheatWatchHex != 0;
+  entry->mode = (CheatMode_t)addCheatMode;
+  entry->stepValue = (uint16_t)strtoul(addCheatStep, NULL, 16);
+  entry->minValue = (uint16_t)strtoul(addCheatMin, NULL, 16);
+  entry->maxValue = (uint16_t)strtoul(addCheatMax, NULL, 16);
+  entry->limitEnabled = addCheatLimitEnabled != 0;
+  entry->value = (uint16_t)strtoul(addCheatValue, NULL, 16);
+  entry->mask = (uint16_t)strtoul(addCheatMask, NULL, 16);
+
+  if (addCheatCondition == 1) {
+    entry->condition = CHEAT_CONDITION_HINT;
+    entry->conditionButton = INPUT_HELP;
+  } else if (addCheatCondition >= 2) {
+    entry->condition = CHEAT_CONDITION_BUTTON;
+    switch (addCheatCondition) {
+    case 2: entry->conditionButton = INPUT_ENTER; break;
+    case 3: entry->conditionButton = INPUT_EXIT; break;
+    case 4: entry->conditionButton = INPUT_ABC; break;
+    case 5: entry->conditionButton = INPUT_UP; break;
+    case 6: entry->conditionButton = INPUT_DOWN; break;
+    case 7: entry->conditionButton = INPUT_LEFT; break;
+    case 8: entry->conditionButton = INPUT_RIGHT; break;
+    case 9: entry->conditionButton = INPUT_RED; break;
+    case 10: entry->conditionButton = INPUT_YELLOW; break;
+    case 11: entry->conditionButton = INPUT_BLUE; break;
+    case 12: entry->conditionButton = INPUT_GREEN; break;
+    default: entry->condition = CHEAT_CONDITION_NONE; entry->conditionButton = INPUT_HELP; break;
+    }
+  } else {
+    entry->condition = CHEAT_CONDITION_NONE;
+    entry->conditionButton = INPUT_HELP;
+  }
+}
 
 
 // Helper functions //
@@ -147,8 +643,8 @@ void controllerMapping(const char* buttonName, char* mappingText, int* mappingLe
   // nk_flags flags = nk_edit_string(ctx, NK_EDIT_SIMPLE, mappingText, mappingLen, 16, nk_filter_hex);
   // if (flags & (NK_EDIT_COMMITED | NK_EDIT_DEACTIVATED)) {
   //   Backend_UpdateButtonMapping(buttonName, mappingText, (*mappingLen));
-  // }
 }
+
 
 static nk_bool openColorPicker = false;
 static struct nk_colorf pickedColor;
@@ -161,6 +657,7 @@ void chooseColor(struct nk_context* ctx, const char* name, uint8_t type) {
   case THEME_BORDER: color = theme[NK_COLOR_BORDER]; break;
   case THEME_WINDOW: color = theme[NK_COLOR_WINDOW]; break;
   case THEME_BUTTON: color = theme[NK_COLOR_BUTTON]; break;
+  default:           color = theme[NK_COLOR_TEXT];   break;
   }
 
   nk_layout_row_dynamic(ctx, 25, 3);
@@ -169,9 +666,9 @@ void chooseColor(struct nk_context* ctx, const char* name, uint8_t type) {
   if (nk_button_label(ctx, "Choose...")) {
     openColorPicker = true;
     colorToPick = type;
-    pickedColor.r = color.r/255.0f;
-    pickedColor.g = color.g/255.0f;
-    pickedColor.b = color.b/255.0f;
+    pickedColor.r = color.r / 255.0f;
+    pickedColor.g = color.g / 255.0f;
+    pickedColor.b = color.b / 255.0f;
     pickedColor.a = 1.0f;
   }
 }
@@ -285,23 +782,91 @@ void UI_RunFrame() {
     themeUpdated = true;
   }
 
+  if (hotkeyCaptureIndex >= 0) {
+    Mapping_t lastEvent;
+    if (Input_GetLastEvent(&lastEvent)) {
+      if (lastEvent.deviceType == INPUT_DEVICETYPE_KEYBOARD && lastEvent.inputType == INPUT_INPUTTYPE_BUTTON && lastEvent.value != 0) {
+        if (lastEvent.inputID == SAPP_KEYCODE_ESCAPE) {
+          hotkeyCaptureIndex = -1;
+        } else {
+          Backend_SetHotkey((HotkeyAction_t)hotkeyCaptureIndex, lastEvent.inputID);
+          hotkeyCaptureIndex = -1;
+        }
+        Input_ClearLastEvent();
+        Input_SetControlsEnable(true);
+      }
+    }
+  }
+
+  if (mapCaptureCtrl >= 0 && mapCaptureInput >= 0) {
+    Mapping_t lastEvent;
+    if (Input_GetLastEvent(&lastEvent)) {
+      if (lastEvent.deviceType == INPUT_DEVICETYPE_KEYBOARD && lastEvent.inputType == INPUT_INPUTTYPE_BUTTON && lastEvent.inputID == SAPP_KEYCODE_ESCAPE) {
+        mapCaptureCtrl = -1;
+        mapCaptureInput = -1;
+        Input_ClearLastEvent();
+        Input_SetControlsEnable(true);
+      } else {
+        bool validDevice =
+          lastEvent.deviceType == INPUT_DEVICETYPE_KEYBOARD ||
+          lastEvent.deviceType == INPUT_DEVICETYPE_MOUSE ||
+          lastEvent.deviceType == INPUT_DEVICETYPE_CONTROLLER;
+        bool validType = lastEvent.inputType == INPUT_INPUTTYPE_BUTTON || lastEvent.inputType == INPUT_INPUTTYPE_AXIS;
+        if (validDevice && validType && lastEvent.value != 0) {
+          Mapping_t mapping = lastEvent;
+          if (lastEvent.inputType == INPUT_INPUTTYPE_AXIS) {
+            mapping.value = (lastEvent.value >= 0) ? 0x4000 : (int16_t)-0x4000;
+          } else {
+            mapping.value = 0x7fff;
+          }
+          Input_SetMapping((uint8_t)mapCaptureCtrl, (uint8_t)mapCaptureInput, mapping);
+          Input_SaveMappings();
+          mapCaptureCtrl = -1;
+          mapCaptureInput = -1;
+          Input_ClearLastEvent();
+          Input_SetControlsEnable(true);
+        }
+      }
+    }
+  }
+
   const float width  = sapp_widthf();
   const float height = sapp_heightf();
 
   char* romPath = NULL;
+  char quickSaveLabel[64];
+  char quickLoadLabel[64];
+  char pauseLabel[64];
+  char stepLabel[64];
+  char resetLabel[64];
+  char toggleUiLabel[64];
+  char toggleFullscreenLabel[64];
+  int quickSaveSlot = Backend_GetQuickSaveSlot();
+  int quickLoadSlot = Backend_GetQuickLoadSlot();
+  char saveSlotLabel[48];
+  char loadSlotLabel[48];
+  snprintf(saveSlotLabel, sizeof(saveSlotLabel), "Save State (Slot %02d)", quickSaveSlot);
+  snprintf(loadSlotLabel, sizeof(loadSlotLabel), "Load State (Slot %02d)", quickLoadSlot);
+  BuildHotkeyLabel(HOTKEY_SAVE_STATE, saveSlotLabel, quickSaveLabel, sizeof(quickSaveLabel));
+  BuildHotkeyLabel(HOTKEY_LOAD_STATE, loadSlotLabel, quickLoadLabel, sizeof(quickLoadLabel));
+  BuildHotkeyLabel(HOTKEY_PAUSE, "Pause", pauseLabel, sizeof(pauseLabel));
+  BuildHotkeyLabel(HOTKEY_STEP, "Step", stepLabel, sizeof(stepLabel));
+  BuildHotkeyLabel(HOTKEY_RESET, "Reset", resetLabel, sizeof(resetLabel));
+  BuildHotkeyLabel(HOTKEY_TOGGLE_UI, "Toggle UI", toggleUiLabel, sizeof(toggleUiLabel));
+  BuildHotkeyLabel(HOTKEY_TOGGLE_FULLSCREEN, "Toggle Fullscreen", toggleFullscreenLabel, sizeof(toggleFullscreenLabel));
 
   // Toolbar //
   if (nk_begin(ctx, "Toolbar", nk_rect(0, 0, width, 32), NK_WINDOW_NO_SCROLLBAR)) {
     nk_menubar_begin(ctx);
-    nk_layout_row_begin(ctx, NK_STATIC, 24, 3);
+    nk_layout_row_begin(ctx, NK_STATIC, 24, 5);
 
     // Menu
     nk_layout_row_push(ctx, 48);
-    if (nk_menu_begin_label(ctx, " Menu", NK_TEXT_LEFT, nk_vec2(175, 200))) {
+    if (nk_menu_begin_label(ctx, " Menu", NK_TEXT_LEFT, nk_vec2(220, 220))) {
       nk_layout_row_dynamic(ctx, 25, 1);
       if (nk_menu_item_label(ctx, "      Open ROM...",       NK_TEXT_LEFT)) romPath = (char*)Backend_OpenFileDialog("Please Select a ROM...");
-      if (nk_menu_item_label(ctx, "[Y]   Toggle Fullscreen", NK_TEXT_LEFT)) sapp_toggle_fullscreen();
-      if (nk_menu_item_label(ctx, "[U]   Toggle UI",         NK_TEXT_LEFT)) showUI = false;
+      if (nk_menu_item_label(ctx, toggleFullscreenLabel, NK_TEXT_LEFT)) sapp_toggle_fullscreen();
+      if (nk_menu_item_label(ctx, toggleUiLabel,         NK_TEXT_LEFT)) showUI = false;
       if (nk_menu_item_label(ctx, "      About",             NK_TEXT_LEFT)) showAbout = true;
       if (nk_menu_item_label(ctx, "[ESC] Quit",              NK_TEXT_LEFT)) sapp_request_quit();
       nk_menu_end(ctx);
@@ -309,24 +874,118 @@ void UI_RunFrame() {
 
     // System
     nk_layout_row_push(ctx, 48);
-    if (nk_menu_begin_label(ctx, "System", NK_TEXT_LEFT, nk_vec2(120, 200))) {
+    if (nk_menu_begin_label(ctx, "System", NK_TEXT_LEFT, nk_vec2(240, 280))) {
       nk_layout_row_dynamic(ctx, 25, 1);
-      if (nk_menu_item_label(ctx, "[P] Pause",       NK_TEXT_LEFT)) VSmile_SetPause(!VSmile_GetPaused());
-      if (nk_menu_item_label(ctx, "[O] Step",        NK_TEXT_LEFT)) VSmile_Step();
-      if (nk_menu_item_label(ctx, "[R] Reset",       NK_TEXT_LEFT)) VSmile_Reset();
-      if (nk_menu_item_label(ctx, "[J] Save State",  NK_TEXT_LEFT)) VSmile_SaveState();
-      if (nk_menu_item_label(ctx, "[K] Load State",  NK_TEXT_LEFT)) VSmile_LoadState();
+      if (nk_menu_item_label(ctx, pauseLabel,       NK_TEXT_LEFT)) VSmile_SetPause(!VSmile_GetPaused());
+      if (nk_menu_item_label(ctx, stepLabel,        NK_TEXT_LEFT)) VSmile_Step();
+      if (nk_menu_item_label(ctx, resetLabel,       NK_TEXT_LEFT)) VSmile_Reset();
+      if (nk_menu_item_label(ctx, quickSaveLabel,   NK_TEXT_LEFT)) Backend_SaveStateSlot(quickSaveSlot);
+      if (nk_menu_item_label(ctx, quickLoadLabel,   NK_TEXT_LEFT)) Backend_LoadStateSlot(quickLoadSlot);
+      if (nk_menu_item_label(ctx, "    Savestates", NK_TEXT_LEFT)) showSaveStates = true;
+      if (nk_menu_item_label(ctx, "    Hotkeys",    NK_TEXT_LEFT)) showHotkeys = true;
+      if (nk_menu_item_label(ctx, "    Controller Config", NK_TEXT_LEFT)) showControllerConfig = true;
       if (nk_menu_item_label(ctx, "    Settings",    NK_TEXT_LEFT)) showEmuSettings = true;
       nk_menu_end(ctx);
     }
 
     // Debug //
-    nk_layout_row_push(ctx, 48);
+    nk_layout_row_push(ctx, 56);
     if (nk_menu_begin_label(ctx, " Debug", NK_TEXT_LEFT, nk_vec2(120, 200))) {
       nk_layout_row_dynamic(ctx, 25, 1);
       if (nk_menu_item_label(ctx, "    Registers", NK_TEXT_LEFT)) showRegisters = true;
       if (nk_menu_item_label(ctx, "    Memory",    NK_TEXT_LEFT)) showMemory    = true;
       if (nk_menu_item_label(ctx, "    CPU",       NK_TEXT_LEFT)) showCPU       = true;
+      nk_menu_end(ctx);
+    }
+
+    // TAS
+    nk_layout_row_push(ctx, 48);
+    if (nk_menu_begin_label(ctx, " TAS", NK_TEXT_LEFT, nk_vec2(240, 380))) {
+      nk_layout_row_dynamic(ctx, 25, 1);
+      if (!Backend_TAS_IsRecording()) {
+        if (nk_menu_item_label(ctx, "    Start Recording", NK_TEXT_LEFT)) {
+          Backend_TAS_Start();
+        }
+      } else {
+        if (nk_menu_item_label(ctx, "    Stop Recording", NK_TEXT_LEFT)) {
+          Backend_TAS_Stop();
+        }
+      }
+
+      if (nk_menu_item_label(ctx, "    Load TAS...", NK_TEXT_LEFT)) {
+        const char* path = Backend_OpenFileDialog("Open TAS Recording");
+        if (path && path[0]) {
+          Backend_TAS_Load(path);
+        }
+      }
+
+      if (!Backend_TAS_IsPlaying()) {
+        if (nk_menu_item_label(ctx, "    Start Playback", NK_TEXT_LEFT)) {
+          Backend_TAS_StartPlayback();
+        }
+      } else {
+        if (nk_menu_item_label(ctx, "    Stop Playback", NK_TEXT_LEFT)) {
+          Backend_TAS_StopPlayback();
+        }
+      }
+
+      char frameLabel[64];
+      snprintf(frameLabel, sizeof(frameLabel), "Frames: %u", Backend_TAS_GetFrameCount());
+      nk_label(ctx, frameLabel, NK_TEXT_LEFT);
+
+      char playbackLabel[64];
+      snprintf(playbackLabel, sizeof(playbackLabel), "Playback: %u/%u", Backend_TAS_GetPlaybackFrame(), Backend_TAS_GetPlaybackLength());
+      nk_label(ctx, playbackLabel, NK_TEXT_LEFT);
+
+      if (nk_menu_item_label(ctx, "    Save Recording...", NK_TEXT_LEFT)) {
+        char defaultPath[256];
+        const char* romTitle = Backend_GetRomTitle();
+        if (romTitle && romTitle[0]) {
+          snprintf(defaultPath, sizeof(defaultPath), "tas/%s.vtas", romTitle);
+        } else {
+          snprintf(defaultPath, sizeof(defaultPath), "tas/recording.vtas");
+        }
+        const char* path = Backend_SaveFileDialog("Save TAS Recording", defaultPath);
+        if (path && path[0]) {
+          Backend_TAS_Save(path);
+        }
+      }
+
+      if (nk_menu_item_label(ctx, "    Clear Recording", NK_TEXT_LEFT)) {
+        Backend_TAS_Clear();
+      }
+
+      if (nk_menu_item_label(ctx, "    Input Editor", NK_TEXT_LEFT)) {
+        showTASEditor = true;
+      }
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      nk_label(ctx, "Emulation Speed", NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 24, 1);
+      float tasSpeed = Backend_GetSpeed();
+      nk_slider_float(ctx, 0.1f, &tasSpeed, 2.0f, 0.1f);
+      Backend_SetSpeed(tasSpeed);
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_bool startFromBoot = Backend_TAS_GetStartFromBoot();
+      if (nk_checkbox_label(ctx, "Start From Boot", &startFromBoot)) {
+        Backend_TAS_SetStartFromBoot(startFromBoot != 0);
+      }
+
+      nk_menu_end(ctx);
+    }
+
+    // Cheats
+    nk_layout_row_push(ctx, 132);
+    bool cheatsEnabledMenu = Cheats_GetGlobalEnabled();
+    if (nk_menu_begin_label(ctx, cheatsEnabledMenu ? "Cheats" : "Cheats (disabled)", NK_TEXT_LEFT, nk_vec2(240, 140))) {
+      nk_layout_row_dynamic(ctx, 25, 1);
+      if (!cheatsEnabledMenu) {
+        nk_label(ctx, "Cheats are disabled", NK_TEXT_LEFT);
+      } else {
+        if (nk_menu_item_label(ctx, "    Manage Cheats", NK_TEXT_LEFT)) showCheats = true;
+        if (nk_menu_item_label(ctx, "    Memory Scan", NK_TEXT_LEFT)) showMemoryScan = true;
+      }
       nk_menu_end(ctx);
     }
 
@@ -374,6 +1033,23 @@ void UI_RunFrame() {
         nk_checkbox_label(ctx, "Show LEDs", &showLeds);
         Backend_ShowLeds(showLeds);
 
+        nk_layout_row_dynamic(ctx, 25, 1);
+        bool warningsEnabled = VSmile_GetWarningsEnabled();
+        if (nk_checkbox_label(ctx, "Show Warnings (Non-fatal)", &warningsEnabled)) {
+          VSmile_SetWarningsEnabled(warningsEnabled);
+          UserSettings_WriteBool("warningsEnabled", warningsEnabled);
+        }
+
+        bool cheatsEnabled = Cheats_GetGlobalEnabled();
+        if (nk_checkbox_label(ctx, "Enable Cheats", &cheatsEnabled)) {
+          Cheats_SetGlobalEnabled(cheatsEnabled);
+          UserSettings_WriteBool("cheatsEnabled", cheatsEnabled);
+          if (!cheatsEnabled) {
+            showCheats = false;
+            showMemoryScan = false;
+          }
+        }
+
         nk_tree_pop(ctx);
       }
 
@@ -413,7 +1089,10 @@ void UI_RunFrame() {
 
       if (nk_tree_push(ctx, NK_TREE_NODE, "Input Bindings", NK_MINIMIZED)) {
         nk_layout_row_dynamic(ctx, 25, 1);
-        nk_label(ctx, "Coming soon!", NK_LEFT);
+        nk_label(ctx, "Configure controller inputs", NK_LEFT);
+        if (nk_button_label(ctx, "Open Controller Config")) {
+          showControllerConfig = true;
+        }
 
         nk_tree_pop(ctx);
       }
@@ -461,6 +1140,749 @@ void UI_RunFrame() {
         nk_label(ctx, "for source code and a full list of contributors, go to:", NK_TEXT_LEFT);
         nk_label(ctx, "https://github.com/Schnert0/VFrown", NK_TEXT_LEFT);
     } else showAbout = false;
+    nk_end(ctx);
+  }
+
+  // Hotkeys //
+  if (showHotkeys) {
+    if (nk_begin(ctx, "Hotkeys", nk_rect(width/2 - 320, height/2 - 220, 640, 440), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 1);
+      if (hotkeyCaptureIndex >= 0) {
+        nk_label(ctx, "Press a key to bind. Esc to cancel.", NK_TEXT_LEFT);
+      } else {
+        nk_label(ctx, "Select Set to bind a hotkey.", NK_TEXT_LEFT);
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 4);
+      for (int32_t i = 0; i < HOTKEY_MAX; i++) {
+        char keyName[32];
+        FormatKeyName(Backend_GetHotkey((HotkeyAction_t)i), keyName, sizeof(keyName));
+        nk_label(ctx, hotkeyActionText[i], NK_TEXT_LEFT);
+        nk_label(ctx, keyName, NK_TEXT_LEFT);
+
+        if (nk_button_label(ctx, "Set")) {
+          hotkeyCaptureIndex = i;
+          Input_ClearLastEvent();
+          Input_SetControlsEnable(false);
+        }
+
+        if (nk_button_label(ctx, "Clear")) {
+          Backend_SetHotkey((HotkeyAction_t)i, 0);
+        }
+      }
+    } else {
+      showHotkeys = false;
+      hotkeyCaptureIndex = -1;
+      Input_SetControlsEnable(true);
+    }
+    nk_end(ctx);
+  }
+
+  // Controller Config //
+  if (showControllerConfig) {
+    if (nk_begin(ctx, "Controller Config", nk_rect(width/2 - 360, height/2 - 260, 720, 520), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Controller", NK_TEXT_LEFT);
+      controllerConfigIndex = nk_combo(ctx, controllerLabelText, NK_LEN(controllerLabelText), controllerConfigIndex, 24, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      if (mapCaptureCtrl >= 0) {
+        nk_label(ctx, "Press a button/axis to bind. Esc to cancel.", NK_TEXT_LEFT);
+      } else {
+        nk_label(ctx, "Select Set to bind an input.", NK_TEXT_LEFT);
+      }
+
+      nk_layout_row_dynamic(ctx, 360, 1);
+      if (nk_group_begin(ctx, "ControllerBindings", NK_WINDOW_BORDER)) {
+        for (int32_t i = 0; i < NUM_INPUTS; i++) {
+          Mapping_t mapping;
+          mapping.raw = 0;
+          Input_GetMapping(controllerConfigIndex, (uint8_t)i, &mapping);
+
+          char mappingText[64];
+          FormatMappingText(mapping, mappingText, sizeof(mappingText));
+
+          nk_layout_row_dynamic(ctx, 24, 4);
+          nk_label(ctx, inputNameText[i], NK_TEXT_LEFT);
+          nk_label(ctx, mappingText, NK_TEXT_LEFT);
+          if (nk_button_label(ctx, "Set")) {
+            mapCaptureCtrl = controllerConfigIndex;
+            mapCaptureInput = i;
+            Input_ClearLastEvent();
+            Input_SetControlsEnable(false);
+          }
+          if (nk_button_label(ctx, "Clear")) {
+            Mapping_t cleared;
+            cleared.raw = 0;
+            Input_SetMapping(controllerConfigIndex, (uint8_t)i, cleared);
+            Input_SaveMappings();
+          }
+        }
+        nk_group_end(ctx);
+      }
+    } else {
+      showControllerConfig = false;
+      mapCaptureCtrl = -1;
+      mapCaptureInput = -1;
+      Input_SetControlsEnable(true);
+    }
+    nk_end(ctx);
+  }
+
+  // Savestate Manager //
+  if (showSaveStates) {
+    if (nk_begin(ctx, "Savestates", nk_rect(width/2 - 320, height/2 - 260, 640, 520), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      const char* romTitle = Backend_GetRomTitle();
+      bool hasRom = (romTitle && romTitle[0]);
+
+      nk_layout_row_dynamic(ctx, 24, 1);
+      if (hasRom) {
+        char romLabel[300];
+        snprintf(romLabel, sizeof(romLabel), "ROM: %s", romTitle);
+        nk_label(ctx, romLabel, NK_TEXT_LEFT);
+      } else {
+        nk_label(ctx, "No ROM loaded. Savestates are disabled.", NK_TEXT_LEFT);
+      }
+
+      int quickSaveSlot = Backend_GetQuickSaveSlot();
+      int quickLoadSlot = Backend_GetQuickLoadSlot();
+      nk_layout_row_dynamic(ctx, 24, 4);
+      nk_label(ctx, "Quick Save Slot", NK_TEXT_LEFT);
+      nk_property_int(ctx, "##quick_save", 0, &quickSaveSlot, 99, 1, 1);
+      nk_label(ctx, "Quick Load Slot", NK_TEXT_LEFT);
+      nk_property_int(ctx, "##quick_load", 0, &quickLoadSlot, 99, 1, 1);
+      Backend_SetQuickSaveSlot(quickSaveSlot);
+      Backend_SetQuickLoadSlot(quickLoadSlot);
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      nk_label(ctx, "Tip: J/K hotkeys use the quick slots above.", NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 24, 1);
+      nk_label(ctx, "Slots", NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 360, 1);
+      if (nk_group_begin(ctx, "SavestateList", NK_WINDOW_BORDER)) {
+        for (int32_t slot = 0; slot < 100; slot++) {
+          bool exists = Backend_StateSlotExists(slot);
+          char slotLabel[16];
+          snprintf(slotLabel, sizeof(slotLabel), "Slot %02d", slot);
+
+          char timestampText[32];
+          if (exists) {
+            FormatSavestateTimestamp(slot, timestampText, sizeof(timestampText));
+            if (timestampText[0] == '\0') {
+              snprintf(timestampText, sizeof(timestampText), "Unknown");
+            }
+          } else {
+            timestampText[0] = '\0';
+          }
+
+          nk_layout_row_begin(ctx, NK_STATIC, 24, 6);
+          nk_layout_row_push(ctx, 70);
+          nk_label(ctx, slotLabel, NK_TEXT_LEFT);
+          nk_layout_row_push(ctx, 60);
+          nk_label(ctx, exists ? "Ready" : "Empty", NK_TEXT_LEFT);
+          nk_layout_row_push(ctx, 190);
+          nk_label(ctx, exists ? timestampText : "", NK_TEXT_LEFT);
+          nk_layout_row_push(ctx, 60);
+          if (nk_button_label(ctx, "Save")) {
+            if (hasRom) Backend_SaveStateSlot(slot);
+          }
+          nk_layout_row_push(ctx, 60);
+          if (exists) {
+            if (nk_button_label(ctx, "Load")) {
+              if (hasRom) Backend_LoadStateSlot(slot);
+            }
+          } else {
+            nk_label(ctx, "", NK_TEXT_LEFT);
+          }
+          nk_layout_row_push(ctx, 60);
+          if (exists) {
+            if (nk_button_label(ctx, "Delete")) {
+              if (hasRom) Backend_DeleteStateSlot(slot);
+            }
+          } else {
+            nk_label(ctx, "", NK_TEXT_LEFT);
+          }
+          nk_layout_row_end(ctx);
+        }
+        nk_group_end(ctx);
+      }
+    } else {
+      showSaveStates = false;
+    }
+    nk_end(ctx);
+  }
+
+  // Manage Cheats //
+  if (showCheats) {
+    if (nk_begin(ctx, "Manage Cheats", nk_rect(width/2 - 320, height/2 - 240, 640, 480), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 1);
+      if (Cheats_GetCount() == 0) {
+        nk_label(ctx, "No cheats loaded for this ROM.", NK_TEXT_LEFT);
+      } else {
+        nk_layout_row_begin(ctx, NK_STATIC, 24, 4);
+        nk_layout_row_push(ctx, 64);
+        nk_label(ctx, "Enabled", NK_TEXT_LEFT);
+        nk_layout_row_push(ctx, 320);
+        nk_label(ctx, "Name", NK_TEXT_LEFT);
+        nk_layout_row_push(ctx, 100);
+        nk_label(ctx, "Persistent", NK_TEXT_LEFT);
+        nk_layout_row_push(ctx, 60);
+        nk_label(ctx, "Watch", NK_TEXT_LEFT);
+        nk_layout_row_end(ctx);
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_label(ctx, "Tip: select a cheat and press Enter to edit.", NK_TEXT_LEFT);
+
+        nk_layout_row_dynamic(ctx, 380, 1);
+        if (nk_group_begin(ctx, "CheatList", NK_WINDOW_BORDER)) {
+          for (int32_t i = 0; i < Cheats_GetCount(); i++) {
+            const CheatEntry_t* entry = Cheats_GetCheat(i);
+            if (!entry) continue;
+
+            nk_layout_row_begin(ctx, NK_STATIC, 24, 4);
+            nk_layout_row_push(ctx, 64);
+            nk_bool enabled = entry->enabled ? 1 : 0;
+            if (nk_checkbox_label(ctx, "", &enabled)) {
+              Cheats_SetEnabled(i, enabled != 0);
+              Cheats_Save();
+            }
+
+            nk_layout_row_push(ctx, 320);
+            nk_bool selected = (manageSelectedIndex == i);
+            if (nk_selectable_label(ctx, entry->name, NK_TEXT_LEFT, &selected)) {
+              manageSelectedIndex = selected ? i : -1;
+            }
+
+            struct nk_rect bounds = nk_widget_bounds(ctx);
+            if (nk_input_is_mouse_click_in_rect(&ctx->input, NK_BUTTON_RIGHT, bounds)) {
+              manageSelectedIndex = i;
+              cheatContextIndex = i;
+              cheatContextPos = ctx->input.mouse.pos;
+              showCheatContext = true;
+            }
+
+            nk_layout_row_push(ctx, 100);
+            nk_bool persistent = entry->persistent ? 1 : 0;
+            if (nk_checkbox_label(ctx, "", &persistent)) {
+              Cheats_SetPersistent(i, persistent != 0);
+              Cheats_Save();
+            }
+
+            nk_layout_row_push(ctx, 60);
+            nk_bool watchEnabled = entry->watchEnabled ? 1 : 0;
+            if (nk_checkbox_label(ctx, "", &watchEnabled)) {
+              Cheats_SetWatchEnabled(i, watchEnabled != 0);
+              Cheats_Save();
+            }
+            nk_layout_row_end(ctx);
+          }
+          nk_group_end(ctx);
+        }
+
+        if (manageSelectedIndex >= 0 && nk_input_is_key_pressed(&ctx->input, NK_KEY_ENTER)) {
+          InitEditCheat(manageSelectedIndex);
+          showEditCheat = true;
+          showCheatContext = false;
+        }
+
+        if (showCheatContext && cheatContextIndex >= 0) {
+          struct nk_rect winBounds = nk_window_get_bounds(ctx);
+          float popupX = cheatContextPos.x - winBounds.x;
+          float popupY = cheatContextPos.y - winBounds.y;
+          float popupW = 180.0f;
+          float popupH = 100.0f;
+
+          if (popupX < 0.0f) popupX = 0.0f;
+          if (popupY < 0.0f) popupY = 0.0f;
+          if (popupX + popupW > winBounds.w) popupX = winBounds.w - popupW;
+          if (popupY + popupH > winBounds.h) popupY = winBounds.h - popupH;
+
+          struct nk_rect popupBounds = nk_rect(popupX, popupY, popupW, popupH);
+          if (nk_popup_begin(ctx, NK_POPUP_DYNAMIC, "CheatContext", NK_WINDOW_NO_SCROLLBAR, popupBounds)) {
+            nk_layout_row_dynamic(ctx, 24, 1);
+            if (nk_button_label(ctx, "Edit")) {
+              InitEditCheat(cheatContextIndex);
+              showEditCheat = true;
+              showCheatContext = false;
+              nk_popup_close(ctx);
+            }
+            if (nk_button_label(ctx, "Close")) {
+              showCheatContext = false;
+              nk_popup_close(ctx);
+            }
+            nk_popup_end(ctx);
+          } else {
+            showCheatContext = false;
+          }
+        }
+      }
+    } else {
+      showCheats = false;
+      Cheats_Save();
+    }
+    nk_end(ctx);
+  }
+
+  // Memory Scan //
+  if (showMemoryScan) {
+    if (nk_begin(ctx, "Memory Scan", nk_rect(width/2 - 320, height/2 - 240, 640, 480), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Scan Type", NK_TEXT_LEFT);
+      scanType = nk_combo(ctx, scanTypeText, NK_LEN(scanTypeText), scanType, 24, nk_vec2(200, 200));
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Compare", NK_TEXT_LEFT);
+      scanCompare = nk_combo(ctx, scanCompareText, NK_LEN(scanCompareText), scanCompare, 24, nk_vec2(200, 200));
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Value", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, scanValueText, &scanValueTextLen, 63, nk_filter_default);
+      if (scanValueTextLen < (int)sizeof(scanValueText)) {
+        scanValueText[scanValueTextLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_checkbox_label(ctx, "Hex", &scanHex);
+      nk_checkbox_label(ctx, "Signed", &scanSigned);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "", NK_TEXT_LEFT);
+      nk_checkbox_label(ctx, "Match Case", &scanMatchCase);
+
+      nk_layout_row_dynamic(ctx, 24, 3);
+      if (nk_button_label(ctx, "New Scan")) {
+        MemoryScan_New((MemoryScanType_t)scanType, scanValueText, scanHex, scanMatchCase, scanSigned, (MemoryScanCompare_t)scanCompare);
+      }
+      if (nk_button_label(ctx, "Refine Scan")) {
+        MemoryScan_Refine((MemoryScanType_t)scanType, scanValueText, scanHex, scanMatchCase, scanSigned, (MemoryScanCompare_t)scanCompare);
+      }
+      if (nk_button_label(ctx, "Reset")) {
+        MemoryScan_Reset();
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 1);
+      char resultsLabel[64];
+      snprintf(resultsLabel, sizeof(resultsLabel), "Results (%d)", MemoryScan_GetResultCount());
+      nk_label(ctx, resultsLabel, NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 20, 1);
+      nk_label(ctx, "Tip: select a result and press Enter to add a cheat.", NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 320, 1);
+      if (nk_group_begin(ctx, "ScanResults", NK_WINDOW_BORDER)) {
+        int32_t count = MemoryScan_GetResultCount();
+        if (count == 0) {
+          nk_layout_row_dynamic(ctx, 22, 1);
+          nk_label(ctx, "No results yet.", NK_TEXT_LEFT);
+        } else {
+          int32_t showCount = count;
+          if (showCount > 128) showCount = 128;
+          nk_layout_row_dynamic(ctx, 22, 2);
+          for (int32_t i = 0; i < showCount; i++) {
+            char entryText[32];
+            char valueText[64];
+            uint32_t offset = MemoryScan_GetResultOffset(i);
+            snprintf(entryText, sizeof(entryText), "0x%04x", offset);
+            FormatScanResultValue(offset, valueText, sizeof(valueText));
+
+            nk_bool selected = (scanSelectedIndex == i);
+            if (nk_selectable_label(ctx, entryText, NK_TEXT_LEFT, &selected)) {
+              scanSelectedIndex = selected ? i : -1;
+            }
+
+            struct nk_rect bounds = nk_widget_bounds(ctx);
+            if (nk_input_is_mouse_click_in_rect(&ctx->input, NK_BUTTON_RIGHT, bounds)) {
+              scanSelectedIndex = i;
+              scanContextIndex = i;
+              scanContextPos = ctx->input.mouse.pos;
+              showScanContext = true;
+            }
+
+            nk_label(ctx, valueText, NK_TEXT_LEFT);
+          }
+        }
+        nk_group_end(ctx);
+      }
+
+      if (scanSelectedIndex >= 0 && nk_input_is_key_pressed(&ctx->input, NK_KEY_ENTER)) {
+        uint32_t offset = MemoryScan_GetResultOffset(scanSelectedIndex);
+        InitAddCheatFromOffset(offset);
+        showAddCheat = true;
+        showScanContext = false;
+      }
+
+      if (showScanContext && scanContextIndex >= 0) {
+        struct nk_rect winBounds = nk_window_get_bounds(ctx);
+        float popupX = scanContextPos.x - winBounds.x;
+        float popupY = scanContextPos.y - winBounds.y;
+        float popupW = 180.0f;
+        float popupH = 80.0f;
+
+        if (popupX < 0.0f) popupX = 0.0f;
+        if (popupY < 0.0f) popupY = 0.0f;
+        if (popupX + popupW > winBounds.w) popupX = winBounds.w - popupW;
+        if (popupY + popupH > winBounds.h) popupY = winBounds.h - popupH;
+
+        struct nk_rect popupBounds = nk_rect(popupX, popupY, popupW, popupH);
+        if (nk_popup_begin(ctx, NK_POPUP_DYNAMIC, "ScanContext", NK_WINDOW_NO_SCROLLBAR, popupBounds)) {
+          nk_layout_row_dynamic(ctx, 24, 1);
+          if (nk_button_label(ctx, "Add custom")) {
+            uint32_t offset = MemoryScan_GetResultOffset(scanContextIndex);
+            InitAddCheatFromOffset(offset);
+            showAddCheat = true;
+            showScanContext = false;
+            nk_popup_close(ctx);
+          }
+          if (nk_button_label(ctx, "Close")) {
+            showScanContext = false;
+            nk_popup_close(ctx);
+          }
+          nk_popup_end(ctx);
+        } else {
+          showScanContext = false;
+        }
+      }
+    } else {
+      showMemoryScan = false;
+    }
+    nk_end(ctx);
+  }
+
+  // Add Cheat //
+  if (showAddCheat) {
+    if (nk_begin(ctx, "Add Cheat", nk_rect(width/2 - 260, height/2 - 180, 520, 360), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Address", NK_TEXT_LEFT);
+      char addrText[16];
+      snprintf(addrText, sizeof(addrText), "0x%04x", addCheatAddr);
+      nk_label(ctx, addrText, NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Name", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatName, &addCheatNameLen, CHEATS_MAX_NAME - 1, nk_filter_default);
+      if (addCheatNameLen < (int)sizeof(addCheatName)) {
+        addCheatName[addCheatNameLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Value", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatValue, &addCheatValueLen, 7, nk_filter_hex);
+      if (addCheatValueLen < (int)sizeof(addCheatValue)) {
+        addCheatValue[addCheatValueLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Mask", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMask, &addCheatMaskLen, 7, nk_filter_hex);
+      if (addCheatMaskLen < (int)sizeof(addCheatMask)) {
+        addCheatMask[addCheatMaskLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Mode", NK_TEXT_LEFT);
+      addCheatMode = nk_combo(ctx, cheatModeText, NK_LEN(cheatModeText), addCheatMode, 24, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Condition", NK_TEXT_LEFT);
+      addCheatCondition = nk_combo(ctx, cheatConditionText, NK_LEN(cheatConditionText), addCheatCondition, 24, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      char inputStatus[256];
+      BuildCheatInputStatus(inputStatus, sizeof(inputStatus));
+      nk_label(ctx, inputStatus, NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_checkbox_label(ctx, "Enabled", &addCheatEnabled);
+      nk_checkbox_label(ctx, "Persistent", &addCheatPersistent);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_checkbox_label(ctx, "Watch", &addCheatWatch);
+      nk_checkbox_label(ctx, "Watch Hex", &addCheatWatchHex);
+
+      if (addCheatMode != 0) {
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Step", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatStep, &addCheatStepLen, 7, nk_filter_hex);
+        if (addCheatStepLen < (int)sizeof(addCheatStep)) {
+          addCheatStep[addCheatStepLen] = '\0';
+        }
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_checkbox_label(ctx, "Enable Limits", &addCheatLimitEnabled);
+        nk_label(ctx, "", NK_TEXT_LEFT);
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Min", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMin, &addCheatMinLen, 7, nk_filter_hex);
+        if (addCheatMinLen < (int)sizeof(addCheatMin)) {
+          addCheatMin[addCheatMinLen] = '\0';
+        }
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Max", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMax, &addCheatMaxLen, 7, nk_filter_hex);
+        if (addCheatMaxLen < (int)sizeof(addCheatMax)) {
+          addCheatMax[addCheatMaxLen] = '\0';
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 28, 2);
+      if (nk_button_label(ctx, "Add")) {
+        if (addCheatNameLen > 0) {
+          CheatEntry_t entry;
+          BuildCheatFromFields(&entry);
+          if (Cheats_AddCheat(&entry)) {
+            Cheats_Save();
+            showAddCheat = false;
+          }
+        }
+      }
+      if (nk_button_label(ctx, "Cancel")) {
+        showAddCheat = false;
+      }
+    } else {
+      showAddCheat = false;
+    }
+    nk_end(ctx);
+  }
+
+  // Edit Cheat //
+  if (showEditCheat && editCheatIndex >= 0) {
+    if (nk_begin(ctx, "Edit Cheat", nk_rect(width/2 - 260, height/2 - 180, 520, 360), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Address", NK_TEXT_LEFT);
+      char addrText[16];
+      snprintf(addrText, sizeof(addrText), "0x%04x", addCheatAddr);
+      nk_label(ctx, addrText, NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Name", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatName, &addCheatNameLen, CHEATS_MAX_NAME - 1, nk_filter_default);
+      if (addCheatNameLen < (int)sizeof(addCheatName)) {
+        addCheatName[addCheatNameLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Value", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatValue, &addCheatValueLen, 7, nk_filter_hex);
+      if (addCheatValueLen < (int)sizeof(addCheatValue)) {
+        addCheatValue[addCheatValueLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Mask", NK_TEXT_LEFT);
+      nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMask, &addCheatMaskLen, 7, nk_filter_hex);
+      if (addCheatMaskLen < (int)sizeof(addCheatMask)) {
+        addCheatMask[addCheatMaskLen] = '\0';
+      }
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Mode", NK_TEXT_LEFT);
+      addCheatMode = nk_combo(ctx, cheatModeText, NK_LEN(cheatModeText), addCheatMode, 24, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Condition", NK_TEXT_LEFT);
+      addCheatCondition = nk_combo(ctx, cheatConditionText, NK_LEN(cheatConditionText), addCheatCondition, 24, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      char inputStatus[256];
+      BuildCheatInputStatus(inputStatus, sizeof(inputStatus));
+      nk_label(ctx, inputStatus, NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_checkbox_label(ctx, "Enabled", &addCheatEnabled);
+      nk_checkbox_label(ctx, "Persistent", &addCheatPersistent);
+
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_checkbox_label(ctx, "Watch", &addCheatWatch);
+      nk_checkbox_label(ctx, "Watch Hex", &addCheatWatchHex);
+
+      if (addCheatMode != 0) {
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Step", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatStep, &addCheatStepLen, 7, nk_filter_hex);
+        if (addCheatStepLen < (int)sizeof(addCheatStep)) {
+          addCheatStep[addCheatStepLen] = '\0';
+        }
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_checkbox_label(ctx, "Enable Limits", &addCheatLimitEnabled);
+        nk_label(ctx, "", NK_TEXT_LEFT);
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Min", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMin, &addCheatMinLen, 7, nk_filter_hex);
+        if (addCheatMinLen < (int)sizeof(addCheatMin)) {
+          addCheatMin[addCheatMinLen] = '\0';
+        }
+
+        nk_layout_row_dynamic(ctx, 24, 2);
+        nk_label(ctx, "Max", NK_TEXT_LEFT);
+        nk_edit_string(ctx, NK_EDIT_SIMPLE, addCheatMax, &addCheatMaxLen, 7, nk_filter_hex);
+        if (addCheatMaxLen < (int)sizeof(addCheatMax)) {
+          addCheatMax[addCheatMaxLen] = '\0';
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 28, 3);
+      if (nk_button_label(ctx, "Save")) {
+        if (addCheatNameLen > 0) {
+          CheatEntry_t entry;
+          BuildCheatFromFields(&entry);
+          if (Cheats_UpdateCheat(editCheatIndex, &entry)) {
+            Cheats_Save();
+            showEditCheat = false;
+            editCheatIndex = -1;
+          }
+        }
+      }
+      if (nk_button_label(ctx, "Delete")) {
+        showDeleteCheatConfirm = true;
+      }
+      if (nk_button_label(ctx, "Cancel")) {
+        showEditCheat = false;
+        editCheatIndex = -1;
+      }
+    } else {
+      showEditCheat = false;
+      editCheatIndex = -1;
+    }
+    nk_end(ctx);
+  }
+
+  // Delete Cheat Confirmation //
+  if (showDeleteCheatConfirm && editCheatIndex >= 0) {
+    if (nk_begin(ctx, "Delete Cheat?", nk_rect(width/2 - 200, height/2 - 80, 400, 160), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 1);
+      nk_label(ctx, "This will permanently delete the cheat.", NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 28, 2);
+      if (nk_button_label(ctx, "Delete")) {
+        Cheats_RemoveCheat(editCheatIndex);
+        Cheats_Save();
+        showDeleteCheatConfirm = false;
+        showEditCheat = false;
+        editCheatIndex = -1;
+      }
+      if (nk_button_label(ctx, "Cancel")) {
+        showDeleteCheatConfirm = false;
+      }
+    } else {
+      showDeleteCheatConfirm = false;
+    }
+    nk_end(ctx);
+  }
+
+  // Cheat Watch Overlay //
+  int watchCount = 0;
+  for (int32_t i = 0; i < Cheats_GetCount(); i++) {
+    const CheatEntry_t* entry = Cheats_GetCheat(i);
+    if (entry && entry->watchEnabled) {
+      watchCount++;
+    }
+  }
+
+  if (watchCount > 0) {
+    float maxWatchHeight = height * 0.5f;
+    if (maxWatchHeight < 140.0f) maxWatchHeight = 140.0f;
+    if (maxWatchHeight > 360.0f) maxWatchHeight = 360.0f;
+
+    float watchHeight = 26.0f + (float)watchCount * 20.0f;
+    if (watchHeight > maxWatchHeight) watchHeight = maxWatchHeight;
+
+    if (nk_begin(ctx, "Cheat Watch", nk_rect(10, 40, 260, watchHeight), NK_WINDOW_MOVABLE | NK_WINDOW_BORDER)) {
+      nk_layout_row_dynamic(ctx, 20, 1);
+      for (int32_t i = 0; i < Cheats_GetCount(); i++) {
+        const CheatEntry_t* entry = Cheats_GetCheat(i);
+        if (!entry || !entry->watchEnabled) continue;
+
+        uint16_t value = Bus_Load(entry->addr);
+        char nameText[CHEATS_MAX_NAME + 8];
+        const char* label = entry->name[0] ? entry->name : "(unnamed)";
+        if (entry->watchHex) {
+          snprintf(nameText, sizeof(nameText), "%s: 0x%04x", label, value);
+        } else {
+          snprintf(nameText, sizeof(nameText), "%s: %u", label, (unsigned)value);
+        }
+        nk_label(ctx, nameText, NK_TEXT_LEFT);
+      }
+    }
+    nk_end(ctx);
+  }
+
+  // TAS Input Editor //
+  if (showTASEditor) {
+    if (nk_begin(ctx, "TAS Input Editor", nk_rect(width/2 - 365, height/2 - 320, 730, 640), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      const int visibleFrames = 120;
+      nk_layout_row_begin(ctx, NK_STATIC, 24, 4);
+      nk_layout_row_push(ctx, 90);
+      nk_label(ctx, "Page Start", NK_TEXT_LEFT);
+      nk_layout_row_push(ctx, 220);
+      nk_property_int(ctx, "##tas_start", 0, &tasEditorStartFrame, 1000000, visibleFrames, visibleFrames);
+      nk_layout_row_push(ctx, 60);
+      if (nk_button_label(ctx, "Prev")) {
+        tasEditorStartFrame -= visibleFrames;
+        if (tasEditorStartFrame < 0) tasEditorStartFrame = 0;
+      }
+      nk_layout_row_push(ctx, 60);
+      if (nk_button_label(ctx, "Next")) {
+        tasEditorStartFrame += visibleFrames;
+      }
+      nk_layout_row_end(ctx);
+
+      if (Backend_TAS_IsRecording() || Backend_TAS_IsPlaying()) {
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_label(ctx, "Stop recording/playback to edit inputs.", NK_TEXT_LEFT);
+      }
+
+      nk_layout_row_dynamic(ctx, 520, 1);
+      if (nk_group_begin(ctx, "TASEditorGrid", NK_WINDOW_BORDER)) {
+        const float rowHeight = 20.0f;
+
+        nk_layout_row_begin(ctx, NK_STATIC, rowHeight, 13);
+        nk_layout_row_push(ctx, 44);
+        nk_label(ctx, "Frame", NK_TEXT_LEFT);
+        for (int i = 0; i < 12; i++) {
+          nk_layout_row_push(ctx, 42);
+          nk_label(ctx, inputNameText[i], NK_TEXT_LEFT);
+        }
+        nk_layout_row_end(ctx);
+
+        for (int row = 0; row < visibleFrames; row++) {
+          int frameIndex = tasEditorStartFrame + row;
+          uint32_t buttons0 = 0;
+          uint32_t buttons1 = 0;
+          Backend_TAS_GetFrame((uint32_t)frameIndex, &buttons0, &buttons1);
+
+          nk_layout_row_begin(ctx, NK_STATIC, rowHeight, 13);
+          nk_layout_row_push(ctx, 44);
+          char frameLabel[16];
+          snprintf(frameLabel, sizeof(frameLabel), "%d", frameIndex);
+          nk_label(ctx, frameLabel, NK_TEXT_LEFT);
+
+          for (int col = 0; col < 12; col++) {
+            nk_layout_row_push(ctx, 42);
+            uint32_t mask = 1u << tasInputOrder[col];
+            nk_bool pressed = (buttons0 & mask) != 0;
+            if (nk_checkbox_label(ctx, "", &pressed)) {
+              if (!(Backend_TAS_IsRecording() || Backend_TAS_IsPlaying())) {
+                if (pressed) {
+                  buttons0 |= mask;
+                } else {
+                  buttons0 &= ~mask;
+                }
+                Backend_TAS_SetFrame((uint32_t)frameIndex, buttons0, buttons1, true);
+              }
+            }
+          }
+          nk_layout_row_end(ctx);
+        }
+
+        nk_group_end(ctx);
+      }
+    } else {
+      showTASEditor = false;
+    }
     nk_end(ctx);
   }
 
@@ -730,4 +2152,14 @@ void UI_Render() {
 
 void UI_Toggle() {
   showUI ^= true;
+}
+
+
+bool UI_IsCheatOverlayOpen() {
+  return showCheats || showMemoryScan || showAddCheat || showEditCheat || showScanContext || showCheatContext;
+}
+
+
+bool UI_IsInputCaptureActive() {
+  return hotkeyCaptureIndex >= 0 || mapCaptureCtrl >= 0;
 }
