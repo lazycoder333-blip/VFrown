@@ -1,5 +1,6 @@
 CFLAGS=-Wall -std=c99
 DEFS=
+BUILD_DIR=build
 # CC=gcc
 INCS=-I. -Isrc/backend/lib
 
@@ -56,12 +57,19 @@ endif
 CFLAGS += $(DEFS)
 CFLAGS += $(INCS)
 
-obj=$(src:.c=.o)
+obj=$(patsubst %.c,$(BUILD_DIR)/%.o,$(src))
 
 .PHONY: VFrown clean
 
-VFrown: $(obj)
+VFrown: $(BUILD_DIR)/VFrown$(OUTEXT)
+
+$(BUILD_DIR)/VFrown$(OUTEXT): $(obj)
+	@mkdir -p $(BUILD_DIR)
 	$(CC) -o $@ $^ $(CFLAGS) $(LIBS)
 
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) -c -o $@ $< $(CFLAGS)
+
 clean:
-	rm -f $(obj)
+	rm -rf $(BUILD_DIR)
