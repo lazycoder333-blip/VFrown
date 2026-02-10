@@ -6,6 +6,7 @@
 #include "../core/tas.h"
 
 #include <errno.h>
+#include <math.h>
 
 static Backend_t this;
 static TAS_t tas;
@@ -205,10 +206,35 @@ void Backend_Update() {
 
   sgl_c1i(0xffffffff);
 
-  if (this.keepAspectRatio) {
+  if (this.pixelPerfectScale) {
+    const int fbWidth = sapp_width();
+    const int fbHeight = sapp_height();
+    int scaleX = fbWidth / 320;
+    int scaleY = fbHeight / 240;
+    int scale = (scaleX < scaleY) ? scaleX : scaleY;
+    if (scale < 1) scale = 1;
+    const int outWidth = 320 * scale;
+    const int outHeight = 240 * scale;
+    const int x0 = (fbWidth - outWidth) / 2;
+    const int y0 = (fbHeight - outHeight) / 2;
 
-    float outHeight = ((int)(height/240))*240.0f; // Get first integer multiple of height
-    float outWidth  = outHeight*(4.0f/3.0f); // Maintain 4:3 aspect ratio
+    const float left = (float)x0;
+    const float right = (float)(x0 + outWidth);
+    const float top = (float)y0;
+    const float bottom = (float)(y0 + outHeight);
+
+    sgl_v2f_t2f(left,  top,    0.0f, 0.0f);
+    sgl_v2f_t2f(right, top,    1.0f, 0.0f);
+    sgl_v2f_t2f(right, bottom, 1.0f, 1.0f);
+    sgl_v2f_t2f(left,  bottom, 0.0f, 1.0f);
+  } else if (this.keepAspectRatio) {
+
+    float scaleX = width / 320.0f;
+    float scaleY = height / 240.0f;
+    float scale = (scaleX < scaleY) ? scaleX : scaleY;
+    if (scale <= 0.0f) scale = 1.0f;
+    float outWidth = 320.0f * scale;
+    float outHeight = 240.0f * scale;
 
     sgl_v2f_t2f(width*0.5f-(outWidth*0.5f), height*0.5f-(outHeight*0.5f), 0.0f, 0.0f);
     sgl_v2f_t2f(width*0.5f+(outWidth*0.5f), height*0.5f-(outHeight*0.5f), 1.0f, 0.0f);
@@ -1204,4 +1230,8 @@ void Backend_DrawChar(int32_t x, int32_t y, char c) {
 
 void Backend_SetKeepAspectRatio(bool keepAR) {
   this.keepAspectRatio = keepAR;
+}
+
+void Backend_SetPixelPerfectScale(bool enabled) {
+  this.pixelPerfectScale = enabled;
 }

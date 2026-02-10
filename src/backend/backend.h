@@ -66,6 +66,7 @@ typedef struct {
   bool oscilloscopeEnabled;
   bool controlsEnabled;
   bool keepAspectRatio;
+  bool pixelPerfectScale;
   uint8_t currScreenFilter;
   int32_t quickSaveSlot;
   int32_t quickLoadSlot;
@@ -165,5 +166,6 @@ void Backend_DrawText(int32_t x, int32_t y, const char* text, ...);
 void Backend_DrawChar(int32_t x, int32_t y, char c);
 
 void Backend_SetKeepAspectRatio(bool keepAR);
+void Backend_SetPixelPerfectScale(bool enabled);
 
 #endif // BACKEND_H

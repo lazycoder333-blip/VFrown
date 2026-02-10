@@ -6,6 +6,12 @@
 #include "../core/bus.h"
 
 #include <sys/stat.h>
+#include <ctype.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dirent.h>
+#endif
 
 // static UI_t this;
 
@@ -67,6 +73,13 @@ static nk_bool showSaveStates  = false;
 static nk_bool showHotkeys     = false;
 static nk_bool showControllerConfig = false;
 static nk_bool showTASEditor   = false;
+static nk_bool showRomBrowser  = false;
+
+#define ROM_LIST_MAX 512
+#define ROM_NAME_MAX 256
+static nk_bool romListDirty = true;
+static int romListCount = 0;
+static char romList[ROM_LIST_MAX][ROM_NAME_MAX];
 
 static int scanType = 0;
 static int scanCompare = 0;
@@ -113,6 +126,7 @@ static nk_bool showLeds  = false;
 static uint8_t currRegion = 0;
 static uint8_t filterMode = SCREENFILTER_NEAREST;
 static nk_bool keepAR;
+static nk_bool pixelPerfectScale;
 static nk_bool showLayer[3] = { true, true, true };
 static nk_bool showSpriteOutlines = false;
 static nk_bool showSpriteFlip = false;
@@ -393,7 +407,7 @@ static void FormatScanResultValue(uint32_t offset, char* outText, size_t outSize
   snprintf(outText, outSize, "N/A");
 }
 
-static bool GetLocalTime(const time_t* timeValue, struct tm* outTime) {
+static bool GetLocalTimeSafe(const time_t* timeValue, struct tm* outTime) {
   if (!timeValue || !outTime) return false;
 #if defined(_WIN32)
   return localtime_s(outTime, timeValue) == 0;
@@ -415,10 +429,57 @@ static void FormatSavestateTimestamp(int32_t slot, char* outText, size_t outSize
     return;
 
   struct tm timeInfo;
-  if (!GetLocalTime(&st.st_mtime, &timeInfo))
+  if (!GetLocalTimeSafe(&st.st_mtime, &timeInfo))
     return;
 
   strftime(outText, outSize, "%Y-%m-%d %H:%M", &timeInfo);
+}
+
+static bool HasBinExtension(const char* name) {
+  if (!name) return false;
+  const char* dot = strrchr(name, '.');
+  if (!dot || dot == name) return false;
+  if (strlen(dot) != 4) return false;
+  return (tolower((unsigned char)dot[1]) == 'b'
+    && tolower((unsigned char)dot[2]) == 'i'
+    && tolower((unsigned char)dot[3]) == 'n');
+}
+
+static void RefreshRomList(void) {
+  romListCount = 0;
+#ifdef _WIN32
+  WIN32_FIND_DATAA findData;
+  HANDLE handle = FindFirstFileA("roms\\*", &findData);
+  if (handle == INVALID_HANDLE_VALUE) return;
+  do {
+    if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+    if (!HasBinExtension(findData.cFileName)) continue;
+    if (romListCount >= ROM_LIST_MAX) break;
+    strncpy(romList[romListCount], findData.cFileName, ROM_NAME_MAX);
+    romList[romListCount][ROM_NAME_MAX - 1] = '\0';
+    romListCount++;
+  } while (FindNextFileA(handle, &findData));
+  FindClose(handle);
+#else
+  DIR* dir = opendir("roms");
+  if (!dir) return;
+  struct dirent* entry = NULL;
+  while ((entry = readdir(dir)) != NULL) {
+    if (entry->d_name[0] == '.') continue;
+    if (!HasBinExtension(entry->d_name)) continue;
+    if (romListCount >= ROM_LIST_MAX) break;
+
+    char path[512];
+    snprintf(path, sizeof(path), "roms%c%s", PATH_CHAR, entry->d_name);
+    struct stat st;
+    if (stat(path, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+
+    strncpy(romList[romListCount], entry->d_name, ROM_NAME_MAX);
+    romList[romListCount][ROM_NAME_MAX - 1] = '\0';
+    romListCount++;
+  }
+  closedir(dir);
+#endif
 }
 
 static void BuildCheatInputStatus(char* outText, size_t outSize) {
@@ -753,6 +814,18 @@ bool UI_Init() {
     updateColor(THEME_BUTTON, color);
   }
 
+  bool storedKeepAR = false;
+  if (UserSettings_ReadBool("keepAspectRatio", &storedKeepAR)) {
+    keepAR = storedKeepAR;
+  }
+  Backend_SetKeepAspectRatio(keepAR != 0);
+
+  bool storedPixelPerfect = false;
+  if (UserSettings_ReadBool("pixelPerfectScale", &storedPixelPerfect)) {
+    pixelPerfectScale = storedPixelPerfect;
+  }
+  Backend_SetPixelPerfectScale(pixelPerfectScale != 0);
+
 
   return true;
 }
@@ -865,6 +938,10 @@ void UI_RunFrame() {
     if (nk_menu_begin_label(ctx, " Menu", NK_TEXT_LEFT, nk_vec2(220, 220))) {
       nk_layout_row_dynamic(ctx, 25, 1);
       if (nk_menu_item_label(ctx, "      Open ROM...",       NK_TEXT_LEFT)) romPath = (char*)Backend_OpenFileDialog("Please Select a ROM...");
+      if (nk_menu_item_label(ctx, "      ROM Browser",        NK_TEXT_LEFT)) {
+        showRomBrowser = true;
+        romListDirty = true;
+      }
       if (nk_menu_item_label(ctx, toggleFullscreenLabel, NK_TEXT_LEFT)) sapp_toggle_fullscreen();
       if (nk_menu_item_label(ctx, toggleUiLabel,         NK_TEXT_LEFT)) showUI = false;
       if (nk_menu_item_label(ctx, "      About",             NK_TEXT_LEFT)) showAbout = true;
@@ -1003,6 +1080,52 @@ void UI_RunFrame() {
   }
 
 
+  // ROM Browser //
+  if (showRomBrowser) {
+    if (romListDirty) {
+      RefreshRomList();
+      romListDirty = false;
+    }
+    if (nk_begin(ctx, "ROM Browser", nk_rect(width*0.5f - 260, height*0.5f - 220, 520, 440), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      nk_layout_row_dynamic(ctx, 24, 2);
+      nk_label(ctx, "Folder: roms", NK_TEXT_LEFT);
+      if (nk_button_label(ctx, "Refresh")) {
+        romListDirty = true;
+      }
+
+      char countLabel[64];
+      snprintf(countLabel, sizeof(countLabel), "ROMs found: %d", romListCount);
+      nk_layout_row_dynamic(ctx, 20, 1);
+      nk_label(ctx, countLabel, NK_TEXT_LEFT);
+
+      nk_layout_row_dynamic(ctx, 340, 1);
+      if (nk_group_begin(ctx, "RomList", NK_WINDOW_BORDER)) {
+        if (romListCount == 0) {
+          nk_layout_row_dynamic(ctx, 24, 1);
+          nk_label(ctx, "No V.Smile ROMs (.bin) found in the roms folder.", NK_TEXT_LEFT);
+        }
+        for (int i = 0; i < romListCount; i++) {
+          nk_layout_row_begin(ctx, NK_STATIC, 24, 2);
+          nk_layout_row_push(ctx, 360);
+          nk_label(ctx, romList[i], NK_TEXT_LEFT);
+          nk_layout_row_push(ctx, 100);
+          if (nk_button_label(ctx, "Load")) {
+            char path[512];
+            snprintf(path, sizeof(path), "roms%c%s", PATH_CHAR, romList[i]);
+            VSmile_LoadROM(path);
+            VSmile_Reset();
+            VSmile_SetPause(false);
+          }
+          nk_layout_row_end(ctx);
+        }
+        nk_group_end(ctx);
+      }
+    } else {
+      showRomBrowser = false;
+    }
+    nk_end(ctx);
+  }
+
   // Emulation Settings //
   if (showEmuSettings) {
     if (nk_begin(ctx, "Emulation Settings", nk_rect(width*0.5f - 600*0.5f, height*0.5f - 400*0.5f, 600, 400), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
@@ -1060,8 +1183,15 @@ void UI_RunFrame() {
         filterMode = nk_combo(ctx, filterText, NK_LEN(filterText), filterMode, 25, nk_vec2(200,200));
         Backend_SetScreenFilter(filterMode);
 
-        nk_checkbox_label(ctx, "Maintain Aspect Ratio", &keepAR);
-        Backend_SetKeepAspectRatio(keepAR);
+        if (nk_checkbox_label(ctx, "Maintain Aspect Ratio", &keepAR)) {
+          Backend_SetKeepAspectRatio(keepAR != 0);
+          UserSettings_WriteBool("keepAspectRatio", keepAR != 0);
+        }
+
+        if (nk_checkbox_label(ctx, "Pixel Perfect Scale", &pixelPerfectScale)) {
+          Backend_SetPixelPerfectScale(pixelPerfectScale != 0);
+          UserSettings_WriteBool("pixelPerfectScale", pixelPerfectScale != 0);
+        }
 
         // Layer Visibility
         nk_label(ctx, "Layer Visibility", NK_TEXT_LEFT);

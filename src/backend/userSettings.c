@@ -17,18 +17,18 @@ static const DefaultEntry_t defaults[] = {
   { "borderColor", "2E2E2E"     },
   { "windowColor", "394347"     },
   { "buttonColor", "30536F"     },
-  { "c0up",        "K0B1097FFF" }, // Up key
-  { "c0down",      "K0B1087FFF" }, // Down key
-  { "c0left",      "K0B1077FFF" }, // Left key
-  {"c0right",      "K0B1067FFF" }, // Right key
-  {"c0red",        "K0B05A7FFF" }, // Z key
-  {"c0yellow",     "K0B0587FFF" }, // X key
-  {"c0blue",       "K0B0437FFF" }, // C key
-  {"c0green",      "K0B0567FFF" }, // V key
+  { "c0up",        "K0B9017FFF" }, // Up key
+  { "c0down",      "K0B8017FFF" }, // Down key
+  { "c0left",      "K0B7017FFF" }, // Left key
+  {"c0right",      "K0B6017FFF" }, // Right key
+  {"c0red",        "K0BA507FFF" }, // Z key
+  {"c0yellow",     "K0B8507FFF" }, // X key
+  {"c0blue",       "K0B3407FFF" }, // C key
+  {"c0green",      "K0B6507FFF" }, // V key
   {"c0enter",      "K0B0207FFF" }, // Space
-  {"c0help",       "K0B0417FFF" }, // A key
-  {"c0exit",       "K0B0537FFF" }, // S key
-  {"c0abc",        "K0B0447FFF" }, // D key
+  {"c0help",       "K0B1407FFF" }, // A key
+  {"c0exit",       "K0B3507FFF" }, // S key
+  {"c0abc",        "K0B4407FFF" }, // D key
   {"c1up",         ""           },
   {"c1down",       ""           },
   {"c1left",       ""           },
@@ -43,9 +43,11 @@ static const DefaultEntry_t defaults[] = {
   {"c1abc",        ""           },
   { "warningsEnabled", "1"      },
   { "cheatsEnabled",   "1"      },
+  { "keepAspectRatio", "0"      },
+  { "pixelPerfectScale", "0"    },
 
 };
-// 109, 108, 107,106, 05a,058,043,056,041,053,044,020
+// 109, 108, 107, 106, 05a, 058, 043, 056, 041, 053, 044, 020
 
 static ini_t* _UserSettings_LoadIni(const char* path);
 static ini_t* _UserSettings_GetDefaults();

@@ -12,7 +12,6 @@ static void initFunc() {
 
   // Ensure runtime directories exist (create if missing)
   EnsureDirectoryExists("sysrom");
-  EnsureDirectoryExists("sysRom");
   EnsureDirectoryExists("savestates");
   EnsureDirectoryExists("roms");
   EnsureDirectoryExists("cheats");

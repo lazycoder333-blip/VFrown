@@ -28,6 +28,21 @@ static const char* mappingStrings[2][NUM_INPUTS] = {
   },
 };
 
+static const Mapping_t defaultMappings[NUM_INPUTS] = {
+  KEYDEF(SAPP_KEYCODE_UP),
+  KEYDEF(SAPP_KEYCODE_DOWN),
+  KEYDEF(SAPP_KEYCODE_LEFT),
+  KEYDEF(SAPP_KEYCODE_RIGHT),
+  KEYDEF(SAPP_KEYCODE_Z),
+  KEYDEF(SAPP_KEYCODE_X),
+  KEYDEF(SAPP_KEYCODE_C),
+  KEYDEF(SAPP_KEYCODE_V),
+  KEYDEF(SAPP_KEYCODE_SPACE),
+  KEYDEF(SAPP_KEYCODE_A),
+  KEYDEF(SAPP_KEYCODE_S),
+  KEYDEF(SAPP_KEYCODE_D),
+};
+
 static void _Input_CheckInput(
   uint8_t deviceType, uint8_t deviceID, uint8_t inputType, uint16_t inputID, int16_t value
 );
@@ -71,9 +86,15 @@ bool Input_Init() {
   Mapping_t mapping;
 
   for (uint32_t i = 0; i < NUM_INPUTS; i++) {
-    if (!UserSettings_ReadString(mappingStrings[0][i], string, 11))
+    mapping.raw = 0;
+    if (!UserSettings_ReadString(mappingStrings[0][i], string, 11)) {
+      this.controllerMappings[0][i] = defaultMappings[i];
       continue;
-    _Input_GetMappingFromString(&mapping, string);
+    }
+    if (!_Input_GetMappingFromString(&mapping, string)) {
+      this.controllerMappings[0][i] = defaultMappings[i];
+      continue;
+    }
     this.controllerMappings[0][i] = mapping;
   }
 
