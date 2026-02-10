@@ -1,5 +1,5 @@
 # V.Frown
- A poorly modified version of the experimental emulator for the V.Smile
+ A modified version of the experimental emulator for the V.Smile
 
  ![VFrown Logo](images/icon.png)
 
