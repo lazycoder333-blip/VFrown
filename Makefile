@@ -69,7 +69,7 @@ $(BUILD_DIR)/VFrown$(OUTEXT): $(obj)
 
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) -c -o $@ $< $(CFLAGS)
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
 	rm -rf $(BUILD_DIR)
