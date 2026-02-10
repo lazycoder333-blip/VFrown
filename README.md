@@ -8,7 +8,7 @@
 **NOTE: this emulator is still a work in progress.**
 
 ## Building and Running
-Building is best done on Linux or MacOS.
+Building is best done on Linux.
 
 Run the following commands:
 ```
