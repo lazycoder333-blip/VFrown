@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (${{ matrix.artifact }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            artifact: linux
+          - os: macos-latest
+            platform: macos
+            artifact: macos
+          - os: windows-latest
+            platform: windows
+            artifact: windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libx11-dev libxi-dev libxcursor-dev libgl1-mesa-dev libasound2-dev
+
+      - name: Install MSYS2 (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: msys2/setup-msys2@v2
+        with:
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            make
+
+      - name: Build (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          make platform=${{ matrix.platform }} build=release
+          strip build/VFrown || true
+
+      - name: Build (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: msys2 {0}
+        run: |
+          make platform=windows build=release
+          strip build/VFrown.exe || true
+
+      - name: Stage artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/VFrown* dist/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VFrown-${{ matrix.artifact }}
+          path: dist/VFrown*
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      - name: Package release zips
+        shell: bash
+        run: |
+          for dir in release/*; do
+            if [[ -d "$dir" ]]; then
+              name=$(basename "$dir")
+              DIR_PATH="$dir" ZIP_PATH="release/${name}.zip" python - <<'PY'
+                import os
+                import pathlib
+                import zipfile
+
+                dir_path = pathlib.Path(os.environ['DIR_PATH'])
+                zip_path = pathlib.Path(os.environ['ZIP_PATH'])
+                with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
+                  for item in dir_path.iterdir():
+                    if item.is_file():
+                      zf.write(item, arcname=item.name)
+                PY
+            fi
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
