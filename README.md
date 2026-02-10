@@ -13,7 +13,7 @@ Building is best done on Linux or MacOS.
 Run the following commands:
 ```
 cd <path/to/project>
-Make platform=<platform> build=<build>
+make platform=<platform> build=<build>
 ./VFrown <path/to/game>
 ```
 Replace `<platform>` with `windows`, `macos` or `linux` depending on your platform,
