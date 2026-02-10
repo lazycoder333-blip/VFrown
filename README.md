@@ -1,13 +1,14 @@
 # V.Frown
  A modified version of the experimental emulator for the V.Smile
 
+ This fork doesn't aim to improve emulation accuracy and only adds quality of life features. If a game doesn't boot on the original fork, it isn't going to boot here.
+
  ![VFrown Logo](images/icon.png)
 
 **NOTE: this emulator is still a work in progress.**
 
 ## Building and Running
-Create a folder in the same location as VFrown named `sysrom` and insert a copy of your BIOS called `sysrom.bin`. While this step isn't required by V.Frown, not all games can run properly (or at all) without a System ROM image.
-
+Building is best done on Linux or MacOS.
 
 Run the following commands:
 ```
@@ -18,19 +19,10 @@ Make platform=<platform> build=<build>
 Replace `<platform>` with `windows`, `macos` or `linux` depending on your platform,
 and replace `<build>` with `debug` or `release`. Without these, it will default to building a linux debug build.
 
+After running V.Frown for the first time, put your sysrom (`sysrom.bin`) in the sysrom folder. This is required for some games to boot.
 
 ## Controls
-```
-Arrow keys: directional movement
-Space: Enter/OK
-A: Help
-S: Exit
-D: Learning Zone
-Z: Red
-X: Yellow
-C: Blue
-V: Green
-```
+You have to configure the controls when you start this version of V.Frown for the first time.
 
 ## Examples
 ![VTech Logo](images/Logo1.png)
@@ -41,7 +33,6 @@ V: Green
 ## TODO / Roadmap
 Currently...
 - Improve Sound (Top priority)
-- Improve accuracy and get more games booting (Top priority)
 
 Later on...
 - Add support for more controllers
