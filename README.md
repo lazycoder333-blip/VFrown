@@ -1,4 +1,4 @@
-# V.Frown
+# V.Frown With Cheats
  A modified version of the experimental emulator for the V.Smile
 
  This fork doesn't aim to improve emulation accuracy and only adds quality of life features. If a game doesn't boot on the original fork, it isn't going to boot here.
@@ -21,8 +21,18 @@ and replace `<build>` with `debug` or `release`. Without these, it will default 
 
 After running V.Frown for the first time, put your sysrom (`sysrom.bin`) in the sysrom folder. This is required for some games to boot.
 
-## Controls
-You have to configure the controls when you start this version of V.Frown for the first time.
+## Default Controls
+```
+Arrow keys: directional movement
+Space: Enter/OK
+A: Help
+S: Exit
+D: Learning Zone
+Z: Red
+X: Yellow
+C: Blue
+V: Green
+```
 
 ## Examples
 ![VTech Logo](images/Logo1.png)
