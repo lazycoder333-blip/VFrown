@@ -5,6 +5,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build (${{ matrix.artifact }})
@@ -59,12 +62,17 @@ jobs:
         run: |
           mkdir -p dist
           cp build/VFrown* dist/
+          if [[ -d cheats ]]; then
+            cp -R cheats dist/
+          fi
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: VFrown-${{ matrix.artifact }}
-          path: dist/VFrown*
+          path: |
+            dist/VFrown*
+            dist/cheats/**
 
   release:
     name: Release
@@ -83,18 +91,7 @@ jobs:
           for dir in release/*; do
             if [[ -d "$dir" ]]; then
               name=$(basename "$dir")
-              DIR_PATH="$dir" ZIP_PATH="release/${name}.zip" python - <<'PY'
-                import os
-                import pathlib
-                import zipfile
-
-                dir_path = pathlib.Path(os.environ['DIR_PATH'])
-                zip_path = pathlib.Path(os.environ['ZIP_PATH'])
-                with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zf:
-                  for item in dir_path.iterdir():
-                    if item.is_file():
-                      zf.write(item, arcname=item.name)
-                PY
+              DIR_PATH="$dir" ZIP_PATH="release/${name}.zip" python -c "import os, zipfile; d=os.environ['DIR_PATH']; z=os.environ['ZIP_PATH']; f=zipfile.ZipFile(z, 'w', compression=zipfile.ZIP_DEFLATED); [f.write(os.path.join(r, n), arcname=os.path.relpath(os.path.join(r, n), d)) for r, dirs, files in os.walk(d) for n in files]; f.close()"
             fi
           done
 
