@@ -152,4 +152,7 @@ void PPU_SetSpriteOutlines(bool enabled);
 void PPU_SetFlipVisual(bool enabled);
 void PPU_SetLayerVisibility(uint8_t layer, bool enabled);
 
+bool PPU_GetSpriteInfo(uint32_t index, Sprite_t* outSprite);
+bool PPU_GetSpritePixels(uint32_t index, uint8_t paletteBank, bool useSpritePalette, uint32_t* outPixels, uint32_t outPixelCapacity, uint16_t* outWidth, uint16_t* outHeight);
+
 #endif // PPU_H

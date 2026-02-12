@@ -211,6 +211,11 @@ typedef struct SPU_t {
   uint16_t currBeatBase;
   uint32_t bufferLen;
   int32_t  sampleTimer, accumulatedSamples;
+  
+  int32_t channelLeftSamples[16];
+  int32_t channelRightSamples[16];
+  float mixedLeftSample;
+  float mixedRightSample;
 } SPU_t;
 
 
@@ -244,5 +249,9 @@ uint16_t SPU_GetIRQ();
 uint16_t SPU_GetChannelIRQ();
 
 void SPU_SetEnabledChannels(uint16_t enable);
+
+bool SPU_GetChannelSample(uint8_t ch, int32_t* outLeft, int32_t* outRight);
+void SPU_GetMixedSample(float* outLeft, float* outRight);
+bool SPU_GetLastChannelSamples(uint8_t ch, int32_t* outLeft, int32_t* outRight);
 
 #endif // SPU_H

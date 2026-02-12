@@ -190,12 +190,17 @@ void SPU_Tick(int32_t cycles) {
     if (this.chanEnable & (1 << i)) { // Channel is enabled
       SPU_TickChannel(i, &left, &right);
 
+      this.channelLeftSamples[i] = left;
+      this.channelRightSamples[i] = right;
+
       if (this.enabledChannels & (1 << i)) {
         leftSample  += left  / 16.0f;
         rightSample += right / 16.0f;
       }
 
     } else {
+      this.channelLeftSamples[i] = 0;
+      this.channelRightSamples[i] = 0;
       Backend_PushOscilloscopeSample(i, 0);
     }
 
@@ -231,6 +236,10 @@ void SPU_Tick(int32_t cycles) {
 
   if (rightSample >  1.0f) rightSample =  1.0f;
   if (rightSample < -1.0f) rightSample = -1.0f;
+
+  // Store final mixed samples for dumping
+  this.mixedLeftSample = leftSample;
+  this.mixedRightSample = rightSample;
 
   // Push to audio buffer
   Backend_PushAudioSample(leftSample, rightSample);
@@ -796,4 +805,44 @@ uint16_t SPU_GetChannelIRQ() {
 
 void SPU_SetEnabledChannels(uint16_t enabled) {
   this.enabledChannels = enabled;
+}
+
+bool SPU_GetChannelSample(uint8_t ch, int32_t* outLeft, int32_t* outRight) {
+  if (ch >= 16 || !outLeft || !outRight) {
+    return false;
+  }
+
+  if (!(this.chanEnable & (1 << ch))) {
+    *outLeft = 0;
+    *outRight = 0;
+    return true;
+  }
+
+  int32_t left = 0;
+  int32_t right = 0;
+  SPU_TickChannel(ch, &left, &right);
+  *outLeft = left;
+  *outRight = right;
+  return true;
+}
+
+
+void SPU_GetMixedSample(float* outLeft, float* outRight) {
+  if (!outLeft || !outRight) {
+    return;
+  }
+
+  *outLeft = this.mixedLeftSample;
+  *outRight = this.mixedRightSample;
+}
+
+
+bool SPU_GetLastChannelSamples(uint8_t ch, int32_t* outLeft, int32_t* outRight) {
+  if (ch >= 16 || !outLeft || !outRight) {
+    return false;
+  }
+
+  *outLeft = this.channelLeftSamples[ch];
+  *outRight = this.channelRightSamples[ch];
+  return true;
 }

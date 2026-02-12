@@ -1,9 +1,12 @@
 #include "ui.h"
 #include "backend.h"
 #include "input.h"
+#include "png_writer.h"
+#include "wav_writer.h"
 #include "../core/cheats.h"
 #include "../core/memory_scan.h"
 #include "../core/bus.h"
+#include "../core/spu.h"
 
 #include <sys/stat.h>
 #include <ctype.h>
@@ -74,6 +77,8 @@ static nk_bool showHotkeys     = false;
 static nk_bool showControllerConfig = false;
 static nk_bool showTASEditor   = false;
 static nk_bool showRomBrowser  = false;
+static nk_bool showSpriteViewer = false;
+static nk_bool showAudioDumper = false;
 
 #define ROM_LIST_MAX 512
 #define ROM_NAME_MAX 256
@@ -131,6 +136,33 @@ static nk_bool showLayer[3] = { true, true, true };
 static nk_bool showSpriteOutlines = false;
 static nk_bool showSpriteFlip = false;
 
+static int spriteViewerIndex = 0;
+static int spriteViewerZoom = 4;
+static int spriteViewerPaletteMode = 0;
+static int spriteViewerPaletteBank = 0;
+static nk_bool spriteViewerSkipEmpty = false;
+static char spriteDumpDir[256] = { 0 };
+static bool spriteDumpDirInit = false;
+static bool spritePreviewDirty = true;
+static uint32_t spritePreviewPixels[64 * 64];
+static uint16_t spritePreviewWidth = 0;
+static uint16_t spritePreviewHeight = 0;
+static snk_image_t spritePreviewImage = { 0 };
+static bool spriteDumpInProgress = false;
+static bool spriteDumpPrevPaused = false;
+static char spriteDumpStatus[128] = { 0 };
+
+static bool audioDumpInProgress = false;
+static bool audioDumpPrevPaused = false;
+static nk_bool audioDumpSeparate = true;
+static nk_bool audioDumpChannels[16] = { true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true };
+static char audioDumpDir[256] = { 0 };
+static bool audioDumpDirInit = false;
+static WavWriter_t* audioDumpWriter = NULL;
+static WavWriter_t* audioDumpChannelWriters[16] = { NULL };
+static uint32_t audioDumpSampleCount = 0;
+static char audioDumpStatus[128] = { 0 };
+
 static int hotkeyCaptureIndex = -1;
 static int mapCaptureCtrl = -1;
 static int mapCaptureInput = -1;
@@ -161,6 +193,10 @@ static const char* regionText[] = {
 
 static const char* filterText[] = {
   "Nearest", "Linear"
+};
+
+static const char* spritePaletteModeText[] = {
+  "Sprite Palette", "Override Palette"
 };
 
 static const char* scanTypeText[] = {
@@ -286,7 +322,13 @@ static void FormatMappingText(Mapping_t mapping, char* outText, size_t outSize) 
     if (mapping.inputType == INPUT_INPUTTYPE_BUTTON) {
       snprintf(outText, outSize, "Pad%d Btn %d", mapping.deviceID + 1, mapping.inputID);
     } else if (mapping.inputType == INPUT_INPUTTYPE_AXIS) {
-      snprintf(outText, outSize, "Pad%d Axis %d", mapping.deviceID + 1, mapping.inputID);
+      if (mapping.value > 0) {
+        snprintf(outText, outSize, "Pad%d Axis %d +", mapping.deviceID + 1, mapping.inputID);
+      } else if (mapping.value < 0) {
+        snprintf(outText, outSize, "Pad%d Axis %d -", mapping.deviceID + 1, mapping.inputID);
+      } else {
+        snprintf(outText, outSize, "Pad%d Axis %d", mapping.deviceID + 1, mapping.inputID);
+      }
     } else {
       snprintf(outText, outSize, "Pad%d Input %d", mapping.deviceID + 1, mapping.inputID);
     }
@@ -707,6 +749,260 @@ void controllerMapping(const char* buttonName, char* mappingText, int* mappingLe
 }
 
 
+static uint32_t SpriteHash32(const void* data, size_t size) {
+  const uint8_t* bytes = (const uint8_t*)data;
+  uint32_t hash = 2166136261u;
+  for (size_t i = 0; i < size; i++) {
+    hash ^= bytes[i];
+    hash *= 16777619u;
+  }
+  return hash;
+}
+
+
+static bool SpritePixelsBlank(const uint32_t* pixels, uint32_t count) {
+  if (!pixels || count == 0) {
+    return true;
+  }
+
+  for (uint32_t i = 0; i < count; i++) {
+    if (pixels[i] != 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+
+static void SpriteViewer_InitDumpDir(void) {
+  const char* title = Backend_GetRomTitle();
+  if (title && title[0]) {
+    snprintf(spriteDumpDir, sizeof(spriteDumpDir), "sprites%c%s", PATH_CHAR, title);
+  } else {
+    if (!spriteDumpDirInit) {
+      snprintf(spriteDumpDir, sizeof(spriteDumpDir), "sprites");
+      spriteDumpDirInit = true;
+    }
+  }
+}
+
+
+static void SpriteViewer_UpdatePreview(void) {
+  uint16_t width = 0;
+  uint16_t height = 0;
+  memset(spritePreviewPixels, 0, sizeof(spritePreviewPixels));
+
+  bool ok = PPU_GetSpritePixels((uint32_t)spriteViewerIndex, (uint8_t)spriteViewerPaletteBank, spriteViewerPaletteMode == 0, spritePreviewPixels, 64 * 64, &width, &height);
+  if (!ok || width == 0 || height == 0) {
+    return;
+  }
+
+  if (spritePreviewImage.id == 0 || width != spritePreviewWidth || height != spritePreviewHeight) {
+    if (spritePreviewImage.id != 0) {
+      snk_destroy_image(spritePreviewImage);
+      spritePreviewImage.id = 0;
+    }
+
+    sg_image_desc imgDesc = {
+      .width = width,
+      .height = height,
+      .pixel_format = SG_PIXELFORMAT_RGBA8,
+      .usage = SG_USAGE_DYNAMIC
+    };
+    sg_image image = sg_make_image(&imgDesc);
+    spritePreviewImage = snk_make_image(&(snk_image_desc_t){
+      .image = image
+    });
+    spritePreviewWidth = width;
+    spritePreviewHeight = height;
+  }
+
+  if (spritePreviewImage.id != 0) {
+    sg_image img = snk_query_image_desc(spritePreviewImage).image;
+    sg_image_data imageData = { 0 };
+    imageData.subimage[0][0].ptr = spritePreviewPixels;
+    imageData.subimage[0][0].size = (size_t)width * (size_t)height * sizeof(uint32_t);
+    sg_update_image(img, &imageData);
+  }
+}
+
+
+static void AudioDumper_InitDumpDir(void) {
+  const char* title = Backend_GetRomTitle();
+  if (title && title[0]) {
+    snprintf(audioDumpDir, sizeof(audioDumpDir), "audio%c%s", PATH_CHAR, title);
+  } else {
+    if (!audioDumpDirInit) {
+      snprintf(audioDumpDir, sizeof(audioDumpDir), "audio");
+      audioDumpDirInit = true;
+    }
+  }
+}
+
+
+static void AudioDumper_Start(void) {
+  if (audioDumpInProgress) {
+    return;
+  }
+
+  AudioDumper_InitDumpDir();
+
+  if (!audioDumpDir[0]) {
+    snprintf(audioDumpStatus, sizeof(audioDumpStatus), "Error: No output directory set.");
+    return;
+  }
+
+  if (!EnsureDirectoryExists(audioDumpDir)) {
+    snprintf(audioDumpStatus, sizeof(audioDumpStatus), "Error: Failed to create output directory.");
+    return;
+  }
+
+  audioDumpInProgress = true;
+  audioDumpSampleCount = 0;
+  audioDumpStatus[0] = '\0';
+  audioDumpPrevPaused = VSmile_GetPaused();
+
+  if (audioDumpSeparate) {
+    // Open separate files for each enabled channel
+    for (int i = 0; i < 16; i++) {
+      if (audioDumpChannels[i]) {
+        char path[512];
+        snprintf(path, sizeof(path), "%s%cchannel_%02d.wav", audioDumpDir, PATH_CHAR, i);
+        audioDumpChannelWriters[i] = Wav_Open(path, OUTPUT_FREQUENCY, 2);
+      }
+    }
+  } else {
+    // Open single mixed file
+    char path[512];
+    snprintf(path, sizeof(path), "%s%cmixed.wav", audioDumpDir, PATH_CHAR);
+    audioDumpWriter = Wav_Open(path, OUTPUT_FREQUENCY, 2);
+  }
+
+  snprintf(audioDumpStatus, sizeof(audioDumpStatus), "Recording...");
+}
+
+
+static void AudioDumper_Stop(void) {
+  if (!audioDumpInProgress) {
+    return;
+  }
+
+  if (audioDumpSeparate) {
+    for (int i = 0; i < 16; i++) {
+      if (audioDumpChannelWriters[i]) {
+        Wav_Close(audioDumpChannelWriters[i]);
+        audioDumpChannelWriters[i] = NULL;
+      }
+    }
+  } else {
+    if (audioDumpWriter) {
+      Wav_Close(audioDumpWriter);
+      audioDumpWriter = NULL;
+    }
+  }
+
+  audioDumpInProgress = false;
+  snprintf(audioDumpStatus, sizeof(audioDumpStatus), "Recorded %u samples (%.2f seconds).", 
+           audioDumpSampleCount, (float)audioDumpSampleCount / (float)OUTPUT_FREQUENCY);
+}
+
+
+static void AudioDumper_WriteSample(void) {
+  if (!audioDumpInProgress) {
+    return;
+  }
+
+  audioDumpSampleCount++;
+
+  if (audioDumpSeparate) {
+    for (int i = 0; i < 16; i++) {
+      if (audioDumpChannelWriters[i]) {
+        int32_t left = 0, right = 0;
+        SPU_GetLastChannelSamples((uint8_t)i, &left, &right);
+        float samples[2];
+        samples[0] = (float)left / 32767.0f;
+        samples[1] = (float)right / 32767.0f;
+        Wav_WriteSamples(audioDumpChannelWriters[i], samples, 2);
+      }
+    }
+  } else {
+    if (audioDumpWriter) {
+      float left = 0.0f, right = 0.0f;
+      SPU_GetMixedSample(&left, &right);
+      float samples[2];
+      samples[0] = left;
+      samples[1] = right;
+      Wav_WriteSamples(audioDumpWriter, samples, 2);
+    }
+  }
+}
+
+
+static void SpriteViewer_DumpSprites(void) {
+  if (spriteDumpInProgress) {
+    return;
+  }
+  spriteDumpInProgress = true;
+  spriteDumpStatus[0] = '\0';
+  spriteDumpPrevPaused = VSmile_GetPaused();
+  if (!spriteDumpPrevPaused) {
+    VSmile_SetPause(true);
+  }
+
+  SpriteViewer_InitDumpDir();
+
+  if (!spriteDumpDir[0]) {
+    snprintf(spriteDumpStatus, sizeof(spriteDumpStatus), "Error: No output directory set.");
+    goto dump_cleanup;
+  }
+
+  if (!EnsureDirectoryExists(spriteDumpDir)) {
+    snprintf(spriteDumpStatus, sizeof(spriteDumpStatus), "Error: Failed to create output directory.");
+    goto dump_cleanup;
+  }
+
+  uint32_t dumpCount = 0;
+  char path[512];
+  uint32_t pixels[64 * 64];
+
+  for (uint32_t i = 0; i < 256; i++) {
+    Sprite_t sprite;
+    if (!PPU_GetSpriteInfo(i, &sprite)) {
+      continue;
+    }
+    uint16_t width = 0;
+    uint16_t height = 0;
+    memset(pixels, 0, sizeof(pixels));
+    if (!PPU_GetSpritePixels(i, (uint8_t)spriteViewerPaletteBank, spriteViewerPaletteMode == 0, pixels, 64 * 64, &width, &height)) {
+      continue;
+    }
+    if (width == 0 || height == 0) {
+      continue;
+    }
+    if (spriteViewerSkipEmpty) {
+      uint32_t pixelCount = (uint32_t)width * (uint32_t)height;
+      if (sprite.tileID == 0 || SpritePixelsBlank(pixels, pixelCount)) {
+        continue;
+      }
+    }
+
+    uint32_t hash = SpriteHash32(pixels, (size_t)width * (size_t)height * sizeof(uint32_t));
+    snprintf(path, sizeof(path), "%s%csprite_%03u_%08x.png", spriteDumpDir, PATH_CHAR, i, hash);
+    if (Png_WriteRGBA(path, width, height, pixels)) {
+      dumpCount++;
+    }
+  }
+
+  snprintf(spriteDumpStatus, sizeof(spriteDumpStatus), "Dumped %u sprites.", dumpCount);
+
+dump_cleanup:
+  if (!spriteDumpPrevPaused) {
+    VSmile_SetPause(false);
+  }
+  spriteDumpInProgress = false;
+}
+
+
 static nk_bool openColorPicker = false;
 static struct nk_colorf pickedColor;
 static uint8_t colorToPick;
@@ -832,6 +1128,13 @@ bool UI_Init() {
 
 
 void UI_Cleanup() {
+  if (spritePreviewImage.id != 0) {
+    snk_destroy_image(spritePreviewImage);
+    spritePreviewImage.id = 0;
+  }
+  if (audioDumpInProgress) {
+    AudioDumper_Stop();
+  }
   snk_shutdown();
 }
 
@@ -967,11 +1270,18 @@ void UI_RunFrame() {
 
     // Debug //
     nk_layout_row_push(ctx, 56);
-    if (nk_menu_begin_label(ctx, " Debug", NK_TEXT_LEFT, nk_vec2(120, 200))) {
+    if (nk_menu_begin_label(ctx, " Debug", NK_TEXT_LEFT, nk_vec2(140, 240))) {
       nk_layout_row_dynamic(ctx, 25, 1);
       if (nk_menu_item_label(ctx, "    Registers", NK_TEXT_LEFT)) showRegisters = true;
       if (nk_menu_item_label(ctx, "    Memory",    NK_TEXT_LEFT)) showMemory    = true;
       if (nk_menu_item_label(ctx, "    CPU",       NK_TEXT_LEFT)) showCPU       = true;
+      if (nk_menu_item_label(ctx, "    Sprite Viewer", NK_TEXT_LEFT)) {
+        showSpriteViewer = true;
+        spritePreviewDirty = true;
+      }
+      if (nk_menu_item_label(ctx, "    Record Audio", NK_TEXT_LEFT)) {
+        showAudioDumper = true;
+      }
       nk_menu_end(ctx);
     }
 
@@ -2079,6 +2389,163 @@ void UI_RunFrame() {
     nk_end(ctx);
   }
 
+  // Record Audio //
+  if (showAudioDumper) {
+    if (nk_begin(ctx, "Record Audio", nk_rect(width/2.0f - 360.0f, height/2.0f - 280.0f, 720, 560), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      AudioDumper_InitDumpDir();
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_checkbox_label(ctx, "Save channels separately", &audioDumpSeparate);
+
+      if (audioDumpSeparate) {
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_label(ctx, "Channel Selection:", NK_TEXT_LEFT);
+        nk_layout_row_dynamic(ctx, 25, 4);
+        for (int i = 0; i < 16; i++) {
+          char label[32];
+          snprintf(label, sizeof(label), "Ch %d", i);
+          nk_checkbox_label(ctx, label, &audioDumpChannels[i]);
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_label(ctx, "Output Dir:", NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_label(ctx, audioDumpDir[0] ? audioDumpDir : "(not set)", NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 25, 1);
+      if (nk_button_label(ctx, "Choose Folder")) {
+        const char* selected = tinyfd_selectFolderDialog("Select audio dump folder", audioDumpDir[0] ? audioDumpDir : NULL);
+        if (selected && selected[0]) {
+          strncpy(audioDumpDir, selected, sizeof(audioDumpDir));
+          audioDumpDir[sizeof(audioDumpDir) - 1] = '\0';
+          audioDumpDirInit = true;
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 25, 2);
+      if (audioDumpInProgress) {
+        if (nk_button_label(ctx, "Stop Recording")) {
+          AudioDumper_Stop();
+        }
+      } else {
+        if (nk_button_label(ctx, "Start Recording")) {
+          AudioDumper_Start();
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      if (audioDumpStatus[0]) {
+        nk_label(ctx, audioDumpStatus, NK_TEXT_LEFT);
+      }
+
+      nk_layout_row_dynamic(ctx, 20, 1);
+      nk_label(ctx, "", NK_TEXT_LEFT);
+      nk_label(ctx, "Note: Audio is recorded while the emulation is running.", NK_TEXT_LEFT);
+      nk_label(ctx, "Separate mode: Each enabled channel saves to channel_XX.wav", NK_TEXT_LEFT);
+      nk_label(ctx, "Mixed mode: All channels save to mixed.wav", NK_TEXT_LEFT);
+
+    } else {
+      showAudioDumper = false;
+      if (audioDumpInProgress) {
+        AudioDumper_Stop();
+      }
+      Backend_SetControlsEnable(true);
+    }
+    nk_end(ctx);
+  }
+
+  // Sprite Viewer //
+  if (showSpriteViewer) {
+    if (nk_begin(ctx, "Sprite Viewer", nk_rect(width/2.0f - 380.0f, height/2.0f - 260.0f, 760, 520), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
+      SpriteViewer_InitDumpDir();
+
+      int prevIndex = spriteViewerIndex;
+      int prevMode = spriteViewerPaletteMode;
+      int prevBank = spriteViewerPaletteBank;
+
+      nk_layout_row_dynamic(ctx, 25, 2);
+      nk_label(ctx, "Sprite Index", NK_TEXT_LEFT);
+      nk_property_int(ctx, "#", 0, &spriteViewerIndex, 255, 1, 1);
+
+      nk_layout_row_dynamic(ctx, 25, 2);
+      nk_label(ctx, "Palette Mode", NK_TEXT_LEFT);
+      spriteViewerPaletteMode = nk_combo(ctx, spritePaletteModeText, NK_LEN(spritePaletteModeText), spriteViewerPaletteMode, 25, nk_vec2(200, 120));
+
+      nk_layout_row_dynamic(ctx, 25, 2);
+      nk_label(ctx, "Palette Bank", NK_TEXT_LEFT);
+      nk_property_int(ctx, "#", 0, &spriteViewerPaletteBank, 15, 1, 1);
+
+      nk_layout_row_dynamic(ctx, 25, 2);
+      nk_label(ctx, "Zoom", NK_TEXT_LEFT);
+      nk_property_int(ctx, "#", 1, &spriteViewerZoom, 8, 1, 1);
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_checkbox_label(ctx, "Skip empty tileID=0 when dumping", &spriteViewerSkipEmpty);
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_label(ctx, "Output Dir:", NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 25, 1);
+      nk_label(ctx, spriteDumpDir[0] ? spriteDumpDir : "(not set)", NK_TEXT_LEFT);
+      nk_layout_row_dynamic(ctx, 25, 1);
+      if (nk_button_label(ctx, "Choose Folder")) {
+        const char* selected = tinyfd_selectFolderDialog("Select sprite dump folder", spriteDumpDir[0] ? spriteDumpDir : NULL);
+        if (selected && selected[0]) {
+          strncpy(spriteDumpDir, selected, sizeof(spriteDumpDir));
+          spriteDumpDir[sizeof(spriteDumpDir) - 1] = '\0';
+          spriteDumpDirInit = true;
+        }
+      }
+
+      nk_layout_row_dynamic(ctx, 25, 1);
+      if (spriteDumpInProgress) {
+        nk_label(ctx, "Dump in progress...", NK_TEXT_LEFT);
+      } else {
+        if (nk_button_label(ctx, "Save Sprites to PNG")) {
+          SpriteViewer_DumpSprites();
+        }
+        if (spriteDumpStatus[0]) {
+          nk_label(ctx, spriteDumpStatus, NK_TEXT_LEFT);
+        }
+      }
+
+      if (prevIndex != spriteViewerIndex || prevMode != spriteViewerPaletteMode || prevBank != spriteViewerPaletteBank) {
+        spritePreviewDirty = true;
+      }
+
+      if (spritePreviewDirty) {
+        SpriteViewer_UpdatePreview();
+        spritePreviewDirty = false;
+      }
+
+      Sprite_t sprite;
+      if (PPU_GetSpriteInfo((uint32_t)spriteViewerIndex, &sprite)) {
+        uint16_t width = (uint16_t)(8 << sprite.attr.width);
+        uint16_t height = (uint16_t)(8 << sprite.attr.height);
+        char info[128];
+        snprintf(info, sizeof(info), "TileID: %u | Size: %ux%u | BPP: %u | HFlip: %u | VFlip: %u | PalBank: %u",
+                 sprite.tileID, width, height, (unsigned)((sprite.attr.bpp + 1) << 1), sprite.attr.hFlip, sprite.attr.vFlip, sprite.attr.palBank);
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_label(ctx, info, NK_TEXT_LEFT);
+      }
+
+      if (spritePreviewImage.id != 0 && spritePreviewWidth > 0 && spritePreviewHeight > 0) {
+        int drawWidth = spritePreviewWidth * spriteViewerZoom;
+        int drawHeight = spritePreviewHeight * spriteViewerZoom;
+        nk_layout_row_static(ctx, (float)drawHeight, drawWidth, 1);
+        struct nk_image img = nk_image_handle(snk_nkhandle(spritePreviewImage));
+        nk_image(ctx, img);
+      } else {
+        nk_layout_row_dynamic(ctx, 20, 1);
+        nk_label(ctx, "No sprite data to display.", NK_TEXT_LEFT);
+      }
+
+    } else {
+      showSpriteViewer = false;
+      Backend_SetControlsEnable(true);
+    }
+    nk_end(ctx);
+  }
+
   // Registers //
   if (showRegisters) {
     if (nk_begin(ctx, "Registers", nk_rect(width/2 - 480/2, height/2 - 270/2, 480, 270), NK_WINDOW_CLOSABLE | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE)) {
@@ -2292,4 +2759,9 @@ bool UI_IsCheatOverlayOpen() {
 
 bool UI_IsInputCaptureActive() {
   return hotkeyCaptureIndex >= 0 || mapCaptureCtrl >= 0;
+}
+
+
+void UI_AudioDumper_WriteSample() {
+  AudioDumper_WriteSample();
 }

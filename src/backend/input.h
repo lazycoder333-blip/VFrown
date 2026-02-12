@@ -29,7 +29,7 @@ typedef union {
     uint32_t deviceID   :  2;
     uint32_t inputType  :  2;
     uint32_t inputID    : 10;
-    uint32_t value      : 16; // Also the threshold, deadzone, etc.
+    int32_t value       : 16; // Also the threshold, deadzone, etc.
   };
 } Mapping_t;
 
@@ -59,6 +59,7 @@ bool Input_GetLastEvent(Mapping_t* outEvent);
 void Input_ClearLastEvent();
 void Input_SetControlsEnable(bool isEnabled);
 void Input_SetOverrideEnabled(bool enabled);
+void Input_ResetButtonState();
 bool Input_GetOverrideEnabled();
 void Input_ApplyOverride(uint32_t buttons0, uint32_t buttons1);
 

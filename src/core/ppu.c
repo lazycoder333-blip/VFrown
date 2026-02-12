@@ -251,6 +251,42 @@ void PPU_RenderTileStrip(int16_t xPos, int16_t tileWidth, uint16_t nc, uint16_t 
 }
 
 
+static void PPU_RenderSpriteRow(uint32_t tileData, uint16_t palOffset, uint8_t nc, uint16_t width, bool hFlip, uint32_t* outRow) {
+  uint32_t m = tileData;
+  uint32_t bits = 0;
+  uint32_t nbits = 0;
+
+  int32_t start, end, step;
+  if (hFlip) {
+    start = width - 1;
+    end = -1;
+    step = -1;
+  } else {
+    start = 0;
+    end = width;
+    step = 1;
+  }
+
+  for (int32_t x = start; x != end; x += step) {
+    bits <<= nc;
+    if (nbits < nc) {
+      uint16_t b = Bus_Load(m++ & 0x3fffff);
+      b = (b << 8) | (b >> 8);
+      bits |= b << (nc - nbits);
+      nbits += 16;
+    }
+    nbits -= nc;
+    uint16_t color = this.palette[palOffset + (bits >> 16)];
+    if (color & 0x8000) {
+      outRow[x] = 0x00000000;
+    } else {
+      outRow[x] = RGB5A1_TO_RGBA8(color & 0x7fff);
+    }
+    bits &= 0xffff;
+  }
+}
+
+
 void PPU_RenderLayerStrip(int32_t layer, int32_t depth, int32_t line) {
   TileAttr_t attr;
   TileCtrl_t ctrl;
@@ -518,4 +554,61 @@ bool PPU_GetLayerVisibility(uint8_t layer) {
 
 void PPU_SetLayerVisibility(uint8_t layer, bool isEnabled) {
   this.layerEnabled[layer] = isEnabled;
+}
+
+
+bool PPU_GetSpriteInfo(uint32_t index, Sprite_t* outSprite) {
+  if (!outSprite || index >= 256) {
+    return false;
+  }
+
+  *outSprite = this.sprites[index];
+  return true;
+}
+
+
+bool PPU_GetSpritePixels(uint32_t index, uint8_t paletteBank, bool useSpritePalette, uint32_t* outPixels, uint32_t outPixelCapacity, uint16_t* outWidth, uint16_t* outHeight) {
+  if (!outPixels || index >= 256) {
+    return false;
+  }
+
+  Sprite_t sprite = this.sprites[index];
+  TileAttr_t attr = sprite.attr;
+  uint16_t width = (uint16_t)(8 << attr.width);
+  uint16_t height = (uint16_t)(8 << attr.height);
+
+  if (outWidth) {
+    *outWidth = width;
+  }
+  if (outHeight) {
+    *outHeight = height;
+  }
+
+  uint32_t pixelCount = (uint32_t)width * (uint32_t)height;
+  if (pixelCount > outPixelCapacity) {
+    return false;
+  }
+
+  memset(outPixels, 0, pixelCount * sizeof(uint32_t));
+
+  uint16_t tile = sprite.tileID;
+  if (tile == 0) {
+    return true;
+  }
+
+  uint8_t nc = (uint8_t)((attr.bpp + 1) << 1);
+  uint8_t palBank = useSpritePalette ? attr.palBank : paletteBank;
+  uint16_t palOffset = (uint16_t)(palBank << 4);
+
+  uint32_t spriteSize = (uint32_t)width * (uint32_t)height * (uint32_t)nc / 16 * (uint32_t)tile;
+  uint32_t base = ((uint32_t)this.spriteSegment << 6) + spriteSize;
+  uint32_t rowStride = (uint32_t)width * (uint32_t)nc / 16;
+
+  for (uint16_t y = 0; y < height; y++) {
+    uint16_t row = attr.vFlip ? (uint16_t)(height - y - 1) : y;
+    uint32_t rowAddr = base + (uint32_t)row * rowStride;
+    PPU_RenderSpriteRow(rowAddr, palOffset, nc, width, attr.hFlip, outPixels + (uint32_t)y * width);
+  }
+
+  return true;
 }

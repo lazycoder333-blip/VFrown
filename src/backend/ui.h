@@ -29,5 +29,6 @@ void UI_Render();
 void UI_Toggle();
 bool UI_IsCheatOverlayOpen();
 bool UI_IsInputCaptureActive();
+void UI_AudioDumper_WriteSample();
 
 #endif // UI_H

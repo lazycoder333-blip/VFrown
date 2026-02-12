@@ -2,6 +2,8 @@
 #include "lib/gamepad/Gamepad.h"
 #include "userSettings.h"
 
+#include <limits.h>
+
 #define KEYDEF(keycode) \
   (Mapping_t){\
     .deviceType=INPUT_DEVICETYPE_KEYBOARD,\
@@ -14,6 +16,8 @@
 static Input_t this;
 static bool overrideEnabled = false;
 static uint32_t latchedPress[2];
+
+#define INPUT_GAMEPAD_INVALID UINT_MAX
 
 static const char* mappingStrings[2][NUM_INPUTS] = {
   {
@@ -70,32 +74,34 @@ bool Input_Init() {
   latchedPress[0] = 0;
   latchedPress[1] = 0;
 
-  Gamepad_init();
+  this.gamepadID[0] = INPUT_GAMEPAD_INVALID;
+  this.gamepadID[1] = INPUT_GAMEPAD_INVALID;
+
   Gamepad_buttonDownFunc(_Input_GamepadButtonDown, NULL);
   Gamepad_buttonUpFunc(_Input_GamepadButtonUp, NULL);
   Gamepad_axisMoveFunc(_Input_GamepadAxisChange, NULL);
   Gamepad_deviceAttachFunc(_Input_GamepadAttached, NULL);
   Gamepad_deviceRemoveFunc(_Input_GamepadDetached, NULL);
-
-  this.gamepadID[0] = -1;
-  this.gamepadID[1] = -1;
+  Gamepad_init();
 
   this.inputEnabled = true;
 
   char string[11];
   Mapping_t mapping;
 
-  for (uint32_t i = 0; i < NUM_INPUTS; i++) {
-    mapping.raw = 0;
-    if (!UserSettings_ReadString(mappingStrings[0][i], string, 11)) {
-      this.controllerMappings[0][i] = defaultMappings[i];
-      continue;
+  for (uint32_t p = 0; p < 2; p++) {
+    for (uint32_t i = 0; i < NUM_INPUTS; i++) {
+      mapping.raw = 0;
+      if (!UserSettings_ReadString(mappingStrings[p][i], string, 11)) {
+        this.controllerMappings[p][i] = defaultMappings[i];
+        continue;
+      }
+      if (!_Input_GetMappingFromString(&mapping, string)) {
+        this.controllerMappings[p][i] = defaultMappings[i];
+        continue;
+      }
+      this.controllerMappings[p][i] = mapping;
     }
-    if (!_Input_GetMappingFromString(&mapping, string)) {
-      this.controllerMappings[0][i] = defaultMappings[i];
-      continue;
-    }
-    this.controllerMappings[0][i] = mapping;
   }
 
   // this.controllerMappings[0][INPUT_UP]    = KEYDEF(SAPP_KEYCODE_UP);
@@ -212,6 +218,16 @@ bool Input_GetOverrideEnabled() {
 }
 
 
+void Input_ResetButtonState() {
+  this.curr[0] = 0;
+  this.curr[1] = 0;
+  this.prev[0] = 0;
+  this.prev[1] = 0;
+  latchedPress[0] = 0;
+  latchedPress[1] = 0;
+}
+
+
 void Input_ApplyOverride(uint32_t buttons0, uint32_t buttons1) {
   if (!overrideEnabled) return;
 
@@ -296,7 +312,16 @@ static void _Input_CheckInput(
     .inputID    = inputID,
     .value      = value,
   };
-  this.lastEvent = event;
+  if (inputType == INPUT_INPUTTYPE_AXIS && this.lastEvent.inputType == INPUT_INPUTTYPE_AXIS) {
+    int16_t lastValue = (int16_t)this.lastEvent.value;
+    int16_t absValue = (value < 0) ? (int16_t)-value : value;
+    int16_t absLastValue = (lastValue < 0) ? (int16_t)-lastValue : lastValue;
+    if (absValue >= absLastValue) {
+      this.lastEvent = event;
+    }
+  } else {
+    this.lastEvent = event;
+  }
 
   for (uint32_t p = 0; p < 2; p++) {
     for (uint32_t i = 0; i < NUM_INPUTS; i++) {
@@ -366,9 +391,9 @@ static void _Input_GamepadAxisChange(
 // Controller connected callback
 static void _Input_GamepadAttached(struct Gamepad_device * device, void * context) {
   VSmile_Log("Gamepad attached");
-  if (this.gamepadID[0] == -1)
+  if (this.gamepadID[0] == INPUT_GAMEPAD_INVALID)
     this.gamepadID[0] = device->deviceID;
-  else if (this.gamepadID[1] == -1)
+  else if (this.gamepadID[1] == INPUT_GAMEPAD_INVALID)
     this.gamepadID[1] = device->deviceID;
 }
 
@@ -377,9 +402,9 @@ static void _Input_GamepadAttached(struct Gamepad_device * device, void * contex
 static void _Input_GamepadDetached(struct Gamepad_device * device, void * context) {
   VSmile_Log("Gamepad detached");
   if (device->deviceID == this.gamepadID[0])
-    this.gamepadID[0] = -1;
+    this.gamepadID[0] = INPUT_GAMEPAD_INVALID;
   else if (device->deviceID == this.gamepadID[1])
-    this.gamepadID[1] = -1;
+    this.gamepadID[1] = INPUT_GAMEPAD_INVALID;
 }
 
 

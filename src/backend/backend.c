@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "input.h"
 #include "font.xpm" // TODO: remove
 #include "lib/tinyfiledialogs.h"
 #include "userSettings.h"
@@ -291,12 +292,13 @@ void Backend_GetFileName(const char* path) {
   start++; // Moved one too far
 
   int32_t size = (int32_t)(end - start);
-  if (size > 256)
-    size = 256;
+  int32_t maxSize = (int32_t)(sizeof(this.title) - 1);
+  if (size > maxSize)
+    size = maxSize;
 
-  for (int i = 0; i < size; i++)
-    this.title[i] = start[i];
-  this.title[255] = '\0';
+  memset(this.title, 0, sizeof(this.title));
+  if (size > 0)
+    memcpy(this.title, start, (size_t)size);
 }
 
 
@@ -626,6 +628,8 @@ float Backend_GetSpeed() {
 
 
 void Backend_SetSpeed(float newSpeed) {
+  // Prevent speed changes during TAS playback to avoid frame desyncs
+  if (tasPlaying) return;
   this.emulationSpeed = newSpeed;
 }
 
@@ -717,6 +721,8 @@ void Backend_PushAudioSample(float leftSample, float rightSample) {
 
   this.sampleHead = (this.sampleHead + 1) % MAX_AUDIO_FRAMES;
   this.sampleCount++;
+
+  UI_AudioDumper_WriteSample();
 }
 
 void Backend_AudioCallback(float* buffer, int numFrames, int numChannels) {
@@ -990,6 +996,7 @@ void Backend_TAS_Start() {
   tasPlaying = false;
   tasPlayIndex = 0;
   tasMarkerIndex = 0;
+  Input_SetOverrideEnabled(false);
   if (tasStartFromBoot) {
     VSmile_Reset();
     VSmile_SetPause(false);
@@ -1062,6 +1069,8 @@ void Backend_TAS_StartPlayback() {
   tasPlaying = true;
   tasPlayIndex = 0;
   tasMarkerIndex = 0;
+  Input_ResetButtonState();
+  Input_SetOverrideEnabled(true);
   if (tasStartFromBoot) {
     VSmile_Reset();
     VSmile_SetPause(false);
@@ -1069,6 +1078,7 @@ void Backend_TAS_StartPlayback() {
       tasMarkerIndex++;
     }
   }
+  VSmile_Log("TAS playback started - %u frames", tas.frameCount);
 }
 
 
@@ -1076,6 +1086,8 @@ void Backend_TAS_StopPlayback() {
   tasPlaying = false;
   tasPlayIndex = 0;
   tasMarkerIndex = 0;
+  Input_SetOverrideEnabled(false);
+  VSmile_Log("TAS playback stopped");
 }
 
 
